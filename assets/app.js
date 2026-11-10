@@ -175,7 +175,8 @@
       var button = el('button', 'btn small', (area === 'all' ? 'All areas' : area.charAt(0).toUpperCase() + area.slice(1)) + ' (' + open + ')');
       button.type = 'button';
       button.setAttribute('aria-pressed', String(areaFilter === area));
-      button.addEventListener('click', function () { areaFilter = area; renderFilters(); renderLists(); });
+      button.setAttribute('data-area', area);
+      button.addEventListener('click', function () { areaFilter = area; renderFilters(); renderLists(); refocus('filters', area); });
       box.appendChild(button);
     });
   }
@@ -313,6 +314,168 @@
     $('result').scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
+  // ---------- Problem search (works without a report) ----------
+
+  var AREA_LABEL = { patching: 'Patching', intune: 'Intune', defender: 'Defender', identity: 'Entra ID', network: 'Network' };
+  // Words admins type for an area. A word that is not in an entry still matches the entries of its area.
+  var AREA_WORDS = {
+    patching: ['update', 'updates', 'patch', 'patches', 'patching', 'wsus', 'wufb', 'autopatch', 'cumulative', 'kb', 'wuauserv', 'upgrade', 'feature', 'quality'],
+    intune: ['intune', 'mdm', 'sync', 'enrollment', 'enrolment', 'enroll', 'company', 'portal', 'ime', 'win32', 'app', 'apps', 'compliance', 'compliant', 'managed'],
+    defender: ['defender', 'antivirus', 'av', 'malware', 'virus', 'signature', 'signatures', 'mde', 'edr', 'tamper', 'realtime', 'protection', 'onboarding', 'onboarded', 'sensor'],
+    identity: ['entra', 'aad', 'azuread', 'azure', 'prt', 'sso', 'hello', 'login', 'logon', 'signin', 'token', 'join', 'joined', 'hybrid'],
+    network: ['network', 'proxy', 'firewall', 'endpoint', 'endpoints', 'dns', 'unreachable', 'connectivity', 'internet', 'offline', 'blocked']
+  };
+  // Words that mean the same thing. A word also matches entries that contain a word from its group.
+  var SYNONYMS = [
+    ['reboot', 'restart', 'pending'],
+    ['disk', 'space', 'storage', 'drive', 'full', 'ssd', 'hdd'],
+    ['disabled', 'stopped', 'running', 'service', 'services'],
+    ['fail', 'fails', 'failed', 'failing', 'error', 'errors', 'broken'],
+    ['old', 'outdated', 'stale', 'behind', 'missing']
+  ];
+  var searchArea = 'all';
+
+  function haystack(fix) {
+    return [fix.id, fix.id.replace(/[._]/g, ' '), fix.area, AREA_LABEL[fix.area], fix.title, fix.note, fix.script, fix.command]
+      .concat(Array.isArray(fix.manualSteps) ? fix.manualSteps : [])
+      .filter(Boolean).join(' ').toLowerCase();
+  }
+
+  function hasWord(text, word) {
+    // Word start match, so "sync" finds "syncing" but "av" does not find "available".
+    var escaped = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp('(^|[^a-z0-9])' + escaped + (word.length < 4 ? '($|[^a-z0-9])' : ''), 'i').test(text);
+  }
+
+  function stem(word) {
+    var m = /^(.{3,}?)(ing|ed|es|s)$/.exec(word);
+    return m ? m[1] : word;
+  }
+
+  function wordScore(fix, word, title, hay) {
+    var score = directScore(fix, word, title, hay);
+    if (score) { return score; }
+    var base = stem(word);
+    return base !== word ? directScore(fix, base, title, hay) : 0;
+  }
+
+  function directScore(fix, word, title, hay) {
+    if (hasWord(title, word)) { return 4; }
+    if (hasWord(hay, word)) { return 2; }
+    if (AREA_WORDS[fix.area] && AREA_WORDS[fix.area].indexOf(word) !== -1) { return 1; }
+    for (var i = 0; i < SYNONYMS.length; i++) {
+      if (SYNONYMS[i].indexOf(word) === -1) { continue; }
+      for (var j = 0; j < SYNONYMS[i].length; j++) {
+        if (SYNONYMS[i][j] !== word && hasWord(hay, SYNONYMS[i][j])) { return 1; }
+      }
+    }
+    return 0;
+  }
+
+  function scoreFix(fix, words) {
+    if (!words.length) { return 1; }
+    var hay = fix._hay || (fix._hay = haystack(fix));
+    var title = (String(fix.title || '') + ' ' + fix.id.replace(/[._]/g, ' ')).toLowerCase();
+    var score = 0;
+    var direct = 0;
+    for (var i = 0; i < words.length; i++) {
+      var w = wordScore(fix, words[i], title, hay);
+      if (w >= 2) { direct++; }
+      score += w;
+    }
+    // Every word has to match unless at least one word matched the entry text directly.
+    var matched = words.filter(function (word) { return wordScore(fix, word, title, hay) > 0; }).length;
+    if (matched === words.length) { return score + 10; }
+    return matched >= Math.ceil(words.length / 2) && (direct || words.length > 1) ? score : 0;
+  }
+
+  function severityRank(fix) {
+    return SEVERITY_ORDER.hasOwnProperty(fix.severity) ? SEVERITY_ORDER[fix.severity] : 3;
+  }
+
+  // Re-render a filter group and keep keyboard focus on the button that was activated.
+  function refocus(boxId, area) {
+    var target = $(boxId).querySelector('[data-area="' + area + '"]');
+    if (target) { target.focus(); }
+  }
+
+  function renderSearchAreas() {
+    var box = $('search-areas');
+    clear(box);
+    var areas = [];
+    catalog.fixes.forEach(function (f) { if (f && f.area && areas.indexOf(f.area) === -1) { areas.push(f.area); } });
+    ['all'].concat(areas).forEach(function (area) {
+      var n = area === 'all' ? catalog.fixes.length : catalog.fixes.filter(function (f) { return f.area === area; }).length;
+      var label = area === 'all' ? 'All' : (AREA_LABEL[area] || area.charAt(0).toUpperCase() + area.slice(1));
+      var button = el('button', 'btn small', label + ' (' + n + ')');
+      button.type = 'button';
+      button.setAttribute('aria-pressed', String(searchArea === area));
+      button.setAttribute('data-area', area);
+      button.addEventListener('click', function () { searchArea = area; renderSearchAreas(); renderSearch(); refocus('search-areas', area); });
+      box.appendChild(button);
+    });
+  }
+
+  function renderSearchResult(fix, open) {
+    var item = el('details', 'hit');
+    if (open) { item.open = true; }
+    var summary = el('summary');
+    var head = el('span', 'hit-head');
+    head.appendChild(el('span', 'hit-title', fix.title || fix.id));
+    head.appendChild(el('span', 'badge ' + (fix.status === 'available' ? 'pass' : (fix.status === 'needs-fix' ? 'warn' : (fix.status === 'manual' ? 'info' : 'neutral'))), FIX_STATUS_LABEL[fix.status] || fix.status));
+    summary.appendChild(head);
+    summary.appendChild(el('span', 'id', fix.id + ' · ' + (AREA_LABEL[fix.area] || fix.area) + (fix.severity ? ' · severity ' + fix.severity : '')));
+    item.appendChild(summary);
+    item.appendChild(renderFix(fix));
+    return item;
+  }
+
+  function renderSearch() {
+    if (!catalog) { return; }
+    var STOP = ['the', 'a', 'an', 'is', 'are', 'not', 'no', 'on', 'of', 'to', 'in', 'and', 'or', 'does', 'doesnt', 'dont', 'cant', 'my', 'for', 'with', 'client', 'device', 'pc', 'windows'];
+    var query = $('search').value.toLowerCase().replace(/[^a-z0-9.\s]/g, ' ').trim();
+    var words = query ? query.split(/\s+/).filter(function (w) { return w.length > 1 && STOP.indexOf(w) === -1; }) : [];
+    var hits = catalog.fixes.filter(function (f) {
+      return f && typeof f.id === 'string' && (searchArea === 'all' || f.area === searchArea);
+    }).map(function (f) { return { fix: f, score: scoreFix(f, words) }; })
+      .filter(function (h) { return h.score > 0; });
+    if (words.length) {
+      hits.sort(function (a, b) {
+        if (b.score !== a.score) { return b.score - a.score; }
+        return severityRank(a.fix) - severityRank(b.fix);
+      });
+    }
+    var box = $('search-results');
+    clear(box);
+    $('search-count').textContent = hits.length === 1 ? '1 solution' : hits.length + ' solutions';
+    if (!hits.length) {
+      box.appendChild(el('p', 'search-empty', 'No matching solution in the catalog. Try another word, pick an area, or run the diagnostic for an exact answer.'));
+      return;
+    }
+    hits.forEach(function (h, i) { box.appendChild(renderSearchResult(h.fix, words.length > 0 && i === 0 && hits.length <= 3)); });
+  }
+
+  function initSearch() {
+    var input = $('search');
+    var timer = null;
+    input.addEventListener('input', function () {
+      clearTimeout(timer);
+      timer = setTimeout(renderSearch, 120);
+    });
+    input.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') { input.value = ''; renderSearch(); }
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-query]'), function (button) {
+      button.addEventListener('click', function () {
+        input.value = button.getAttribute('data-query');
+        searchArea = 'all';
+        renderSearchAreas();
+        renderSearch();
+        input.focus();
+      });
+    });
+  }
+
   // ---------- Input handling ----------
 
   function readFile(file) {
@@ -337,6 +500,8 @@
       drop.addEventListener(name, function (e) { e.preventDefault(); drop.classList.remove('over'); });
     });
     drop.addEventListener('drop', function (e) { readFile(e.dataTransfer.files[0]); });
+
+    initSearch();
 
     $('analyse').addEventListener('click', function () { analyse($('paste').value); });
     $('sample').addEventListener('click', function () {
@@ -368,6 +533,8 @@
       catalog = data;
       data.fixes.forEach(function (fix) { if (fix && typeof fix.id === 'string') { catalogById[fix.id] = fix; } });
       $('catalog-info').textContent = 'Fix catalog: ' + data.fixes.length + ' entries, updated ' + (data.updated || 'unknown') + '.';
+      renderSearchAreas();
+      renderSearch();
     }).catch(function () {
       showError('The fix catalog (data/catalog.json) could not be loaded. If you opened this page as a local file, serve it from a web server instead.');
     });

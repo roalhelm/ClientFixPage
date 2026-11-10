@@ -8,6 +8,8 @@ A static web page that tells an admin which script to run so a Windows client is
 2. Open the page and load the report (upload, drop or paste).
 3. The page matches each finding ID against `data/catalog.json` and shows the recommended script, a download link and the command to run.
 
+Without a report, admins can also type a problem (or pick an area or a common problem) under **Find a fix by problem** and get the matching scripts and step-by-step guides from the catalog.
+
 The report is processed in the browser only. Nothing is uploaded. The page never runs a fix itself.
 
 ## Run the diagnostic
@@ -29,7 +31,7 @@ Run it elevated for complete results. Useful switches:
 
 | Path | Content |
 | --- | --- |
-| `index.html`, `assets/` | The page (no build step, no dependencies) |
+| `index.html`, `assets/` | The page (no build step, no dependencies). Design, fonts and logo follow [letmetrythis.dev](https://letmetrythis.dev/) |
 | `data/catalog.json` | Maps finding IDs to fix scripts |
 | `data/sample-report.json` | Sample report for the "Load sample report" button |
 | `scripts/Get-ClientHealth.ps1` | The diagnostic script |
