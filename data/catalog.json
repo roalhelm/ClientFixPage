@@ -18,7 +18,7 @@
       "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
       "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
       "risk": "medium",
-      "note": "Run only with the destructive steps switched off until the review findings are fixed."
+      "note": "The High-risk steps were fixed on 2026-11-10. The command still keeps the remaining invasive steps (agent reset, policy and registry cleanup) switched off."
     },
     {
       "id": "WU.SCAN.FAILED",
@@ -44,7 +44,7 @@
       "download": "https://raw.githubusercontent.com/roalhelm/Windows-Update-Health-Remediation-Suite/main/src/intune/Remediate-WUHealth.ps1",
       "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-WUHealth.ps1",
       "risk": "low",
-      "note": "Repo is private: the download link works only for users with access."
+      "note": "Repairs only when DISM reports the store as repairable. Restart the device first if a reboot is pending."
     },
     {
       "id": "WU.POLICY.WSUS_LEFTOVER",
