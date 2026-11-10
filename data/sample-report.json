@@ -1,15 +1,15 @@
 {
   "schemaVersion": "1.0",
   "tool": "Get-ClientHealth.ps1",
-  "toolVersion": "0.1.0",
+  "toolVersion": "0.3.0",
   "generatedAt": "2026-11-10T11:30:00.0000000Z",
   "elevated": true,
   "runAsSystem": false,
   "anonymized": true,
   "overall": "unhealthy",
   "summary": {
-    "pass": 11,
-    "fail": 6,
+    "pass": 14,
+    "fail": 8,
     "warn": 1,
     "info": 1,
     "unknown": 1
@@ -37,7 +37,9 @@
     "WU.POLICY.WSUS_LEFTOVER",
     "SYS.DISK.LOWSPACE",
     "DEF.SIGNATURE.OUTDATED",
-    "DEF.TAMPER.OFF"
+    "DEF.TAMPER.OFF",
+    "WU.UPDATES.PAUSED",
+    "SEC.SECUREBOOT.CERT2023"
   ],
   "checks": [
     {
@@ -234,6 +236,69 @@
       "title": "Defender for Endpoint onboarding",
       "detail": "Check could not run: sample value.",
       "evidence": null
+    },
+    {
+      "id": "WU.UPDATES.PAUSED",
+      "area": "patching",
+      "status": "fail",
+      "title": "Updates are paused on the device",
+      "detail": "Paused in Settings until 2026-12-08 09:00 UTC.",
+      "evidence": {
+        "localPauseUntilUtc": "2026-12-08T09:00:00.0000000Z",
+        "pausedByPolicy": false
+      }
+    },
+    {
+      "id": "SYS.UPTIME.LONG",
+      "area": "patching",
+      "status": "pass",
+      "title": "Device was restarted recently",
+      "detail": "Uptime 7.2 days.",
+      "evidence": {
+        "uptimeDays": 7.2,
+        "fastStartupEnabled": true
+      }
+    },
+    {
+      "id": "SEC.SECUREBOOT.CERT2023",
+      "area": "security",
+      "status": "fail",
+      "title": "The 2023 Secure Boot certificates are not installed",
+      "detail": "The Microsoft Secure Boot certificates from 2011 expired in 2026. Without the 2023 certificates the device gets no new Secure Boot protections and no new boot manager.",
+      "evidence": {
+        "uefiCa2023Status": "NotStarted",
+        "uefiCa2023Error": null,
+        "dbHasWindowsUefiCa2023": false,
+        "kekHasKek2kCa2023": false,
+        "availableUpdates": 0
+      }
+    },
+    {
+      "id": "SEC.FIREWALL.OFF",
+      "area": "security",
+      "status": "pass",
+      "title": "All Windows Firewall profiles are on",
+      "detail": "",
+      "evidence": {
+        "profilesOff": [],
+        "thirdPartyFirewall": ""
+      }
+    },
+    {
+      "id": "APP.M365.UPDATESTUCK",
+      "area": "apps",
+      "status": "pass",
+      "title": "Microsoft 365 Apps update mechanism is OK",
+      "detail": "Version 16.0.19328.20244.",
+      "evidence": {
+        "version": "16.0.19328.20244",
+        "updatesEnabled": "True",
+        "clickToRunSvcStart": 2,
+        "updateTaskState": "Ready",
+        "daysSinceUpdateTaskRun": 0.4,
+        "managedByConfigMgr": false,
+        "updatesOffByPolicy": false
+      }
     }
   ]
 }

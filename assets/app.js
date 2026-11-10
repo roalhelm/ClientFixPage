@@ -15,7 +15,7 @@
     'manual': 'Step-by-step guide'
   };
 
-  var AREA_LABEL = { patching: 'Patching', intune: 'Intune', defender: 'Defender', identity: 'Entra ID', network: 'Network', bitlocker: 'BitLocker' };
+  var AREA_LABEL = { patching: 'Patching', intune: 'Intune', defender: 'Defender', identity: 'Entra ID', network: 'Network', bitlocker: 'BitLocker', security: 'Security', apps: 'Apps' };
 
   var catalog = null;
   var catalogById = {};
@@ -325,7 +325,9 @@
     intune: ['intune', 'mdm', 'sync', 'enrollment', 'enrolment', 'enroll', 'company', 'portal', 'ime', 'win32', 'app', 'apps', 'compliance', 'compliant', 'managed'],
     defender: ['defender', 'antivirus', 'av', 'malware', 'virus', 'signature', 'signatures', 'mde', 'edr', 'tamper', 'realtime', 'protection', 'onboarding', 'onboarded', 'sensor'],
     identity: ['entra', 'aad', 'azuread', 'azure', 'prt', 'sso', 'hello', 'login', 'logon', 'signin', 'token', 'join', 'joined', 'hybrid'],
-    network: ['network', 'proxy', 'firewall', 'endpoint', 'endpoints', 'dns', 'unreachable', 'connectivity', 'internet', 'offline', 'blocked']
+    network: ['network', 'proxy', 'endpoint', 'endpoints', 'dns', 'unreachable', 'connectivity', 'internet', 'offline', 'blocked', 'firewall', 'tls', 'ssl', 'https'],
+    security: ['security', 'secure', 'firewall', 'laps', 'password', 'uefi', 'certificate', 'certificates', 'boot'],
+    apps: ['app', 'apps', 'store', 'winget', 'office', 'm365', 'microsoft365', 'word', 'excel', 'outlook', 'teams']
   };
   // Words that mean the same thing. A word also matches entries that contain a word from its group.
   var SYNONYMS = [

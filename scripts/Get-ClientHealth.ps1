@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
     Read-only health check for a Windows client (Windows Update, Intune/MDM, Entra ID, BitLocker,
-    drivers, Company Portal, Defender, network).
+    drivers, Company Portal, Defender, Secure Boot, LAPS, firewall, Store, Microsoft 365 Apps, network).
 
 .DESCRIPTION
     Collects the state of a Windows 10/11 client and writes a JSON report.
@@ -56,7 +56,7 @@
     and collect the JSON with "Collect diagnostics", or from the IME Logs folder.
 
 .NOTES
-    Version : 0.2.0
+    Version : 0.3.0
     Requires: Windows PowerShell 5.1 or PowerShell 7
 #>
 [CmdletBinding()]
@@ -74,7 +74,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$ScriptVersion = '0.2.0'
+$ScriptVersion = '0.3.0'
 $SchemaVersion = '1.0'
 
 #region Thresholds
@@ -85,6 +85,22 @@ $MaxDaysSinceMdmSync    = 7    # MDM.SYNC.STALE
 $MaxSignatureAgeDays    = 3    # DEF.SIGNATURE.OUTDATED
 $MdmCertWarnDays        = 30   # MDM.ENROLLMENT.BROKEN (certificate expiry warning)
 $MaxClockSkewSeconds    = 300  # SYS.TIME.SKEW (Kerberos tolerance is 5 minutes)
+$MaxUptimeDays          = 14   # SYS.UPTIME.LONG
+$PolicyErrorDays        = 3    # MDM.POLICY.ERRORS (look-back)
+$MinPolicyErrors        = 10   # MDM.POLICY.ERRORS (error events in that time)
+$MaxDaysSinceOfficeUpdateCheck = 14  # APP.M365.UPDATESTUCK
+$MaxPlatformAgeMonths   = 4    # DEF.PLATFORM.OUTDATED
+$ServicingWarnDays      = 90   # WU.OSVERSION.EOS
+# WU.OSVERSION.EOS: last servicing day per build (Home/Pro and Enterprise/Education).
+# Source: https://learn.microsoft.com/windows/release-health/. Add new versions here.
+$ServicingEnd = @(
+    [pscustomobject]@{ Build = 19045; Name = 'Windows 10 22H2'; Pro = '2025-10-14'; Enterprise = '2025-10-14' },
+    [pscustomobject]@{ Build = 22000; Name = 'Windows 11 21H2'; Pro = '2023-10-10'; Enterprise = '2024-10-08' },
+    [pscustomobject]@{ Build = 22621; Name = 'Windows 11 22H2'; Pro = '2024-10-08'; Enterprise = '2025-10-14' },
+    [pscustomobject]@{ Build = 22631; Name = 'Windows 11 23H2'; Pro = '2025-11-11'; Enterprise = '2026-11-10' },
+    [pscustomobject]@{ Build = 26100; Name = 'Windows 11 24H2'; Pro = '2026-10-13'; Enterprise = '2027-10-12' },
+    [pscustomobject]@{ Build = 26200; Name = 'Windows 11 25H2'; Pro = '2027-10-12'; Enterprise = '2028-10-10' }
+)
 $NetworkTimeoutMs       = 4000
 $Endpoints = @(
     @{ Host = 'login.microsoftonline.com';           Purpose = 'Entra ID sign-in' },
@@ -1443,6 +1459,539 @@ Invoke-Check -Id 'DEF.MDE.NOTONBOARDED' -Area 'defender' -Title 'Defender for En
     else {
         Add-Check -Id 'DEF.MDE.NOTONBOARDED' -Area 'defender' -Status 'warn' -Title 'Device is not onboarded to Defender for Endpoint' `
             -Detail 'Ignore this if your organisation does not use Defender for Endpoint.' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Patching: uptime, pause, Delivery Optimization, end of servicing
+Invoke-Check -Id 'SYS.UPTIME.LONG' -Area 'patching' -Title 'Uptime' -Script {
+    $boot = (Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction Stop).LastBootUpTime
+    $days = [math]::Round(((Get-Date) - $boot).TotalDays, 1)
+    $fastStartup = (Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Power' -Name 'HiberbootEnabled') -eq 1
+    $evidence = [ordered]@{ uptimeDays = $days; fastStartupEnabled = $fastStartup }
+    if ($days -gt $MaxUptimeDays) {
+        Add-Check -Id 'SYS.UPTIME.LONG' -Area 'patching' -Status 'warn' -Title 'No real restart for a long time' `
+            -Detail ("Uptime {0} days (limit {1}). With Fast Startup, 'Shut down' does not restart the kernel, so updates and policies that wait for a restart are not finished." -f $days, $MaxUptimeDays) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SYS.UPTIME.LONG' -Area 'patching' -Status 'pass' -Title 'Device was restarted recently' -Detail ("Uptime {0} days." -f $days) -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'WU.UPDATES.PAUSED' -Area 'patching' -Title 'Update pause' -Script {
+    $ux = 'HKLM:\SOFTWARE\Microsoft\WindowsUpdate\UX\Settings'
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+    $pauseEnd = $null
+    foreach ($name in 'PauseUpdatesExpiryTime', 'PauseQualityUpdatesEndTime', 'PauseFeatureUpdatesEndTime') {
+        $value = [string](Get-RegValue -Path $ux -Name $name)
+        if (-not $value) { continue }
+        try { $date = [datetime]::Parse($value, [System.Globalization.CultureInfo]::InvariantCulture, $styles) } catch { continue }
+        if ($date -gt [datetime]::UtcNow -and (-not $pauseEnd -or $date -gt $pauseEnd)) { $pauseEnd = $date }
+    }
+    $mdm = 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Update'
+    $gpo = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+    $policyPause = ((Get-RegValue -Path $mdm -Name 'PauseQualityUpdates') -eq 1) -or ((Get-RegValue -Path $mdm -Name 'PauseFeatureUpdates') -eq 1) -or
+                   [bool][string](Get-RegValue -Path $gpo -Name 'PauseQualityUpdatesStartTime') -or [bool][string](Get-RegValue -Path $gpo -Name 'PauseFeatureUpdatesStartTime')
+    $evidence = [ordered]@{ localPauseUntilUtc = $null; pausedByPolicy = $policyPause }
+    if ($pauseEnd) { $evidence.localPauseUntilUtc = $pauseEnd.ToString('o') }
+    if ($pauseEnd) {
+        Add-Check -Id 'WU.UPDATES.PAUSED' -Area 'patching' -Status 'fail' -Title 'Updates are paused on the device' `
+            -Detail ("Paused in Settings until {0} UTC." -f $pauseEnd.ToString('yyyy-MM-dd HH:mm')) -Evidence $evidence
+    }
+    elseif ($policyPause) {
+        Add-Check -Id 'WU.UPDATES.PAUSED' -Area 'patching' -Status 'info' -Title 'Updates are paused by policy' `
+            -Detail 'An update ring or Group Policy pauses updates. That is deliberate; resume it in the policy.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'WU.UPDATES.PAUSED' -Area 'patching' -Status 'pass' -Title 'Updates are not paused' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'WU.DO.BROKEN' -Area 'patching' -Title 'Delivery Optimization' -Script {
+    $start = Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\DoSvc' -Name 'Start'
+    $mode = $null
+    foreach ($path in 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\DeliveryOptimization', 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeliveryOptimization') {
+        $value = Get-RegValue -Path $path -Name 'DODownloadMode'
+        if ($null -ne $value -and $null -eq $mode) { $mode = [int]$value }
+    }
+    $evidence = [ordered]@{ doSvcStart = $start; downloadModePolicy = $mode }
+    $isWin11 = $false
+    try { $isWin11 = ([int]$device.build -ge 22000) } catch { }
+    if ($null -eq $start) {
+        Add-Check -Id 'WU.DO.BROKEN' -Area 'patching' -Status 'fail' -Title 'Delivery Optimization service is missing' -Evidence $evidence
+    }
+    elseif ($start -eq 4) {
+        Add-Check -Id 'WU.DO.BROKEN' -Area 'patching' -Status 'fail' -Title 'Delivery Optimization service is disabled' `
+            -Detail 'Windows Update, Store and Intune app downloads go through this service.' -Evidence $evidence
+    }
+    elseif ($mode -eq 100 -and $isWin11) {
+        Add-Check -Id 'WU.DO.BROKEN' -Area 'patching' -Status 'warn' -Title 'Delivery Optimization download mode 100 (Bypass) is set' `
+            -Detail 'Bypass is deprecated on Windows 11. Set the policy to 0 (HTTP only) or 1 (LAN).' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'WU.DO.BROKEN' -Area 'patching' -Status 'pass' -Title 'Delivery Optimization service is enabled' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Title 'Windows version servicing' -Script {
+    $edition = [string](Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID')
+    $build = 0
+    try { $build = [int]$device.build } catch { }
+    $evidence = [ordered]@{ build = $build; displayVersion = $device.displayVersion; edition = $edition; endOfServicing = $null; daysLeft = $null }
+    if ($edition -match 'EnterpriseS') {
+        Add-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Status 'info' -Title 'LTSC edition: servicing end not checked' -Evidence $evidence
+        return
+    }
+    $entry = $ServicingEnd | Where-Object { $_.Build -eq $build } | Select-Object -First 1
+    if (-not $entry) {
+        Add-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Status 'info' -Title 'Servicing end of this Windows build is not in the script table' `
+            -Detail ("Build {0}. Check https://learn.microsoft.com/windows/release-health/." -f $build) -Evidence $evidence
+        return
+    }
+    $endText = if ($edition -match 'Enterprise|Education') { $entry.Enterprise } else { $entry.Pro }
+    $end = [datetime]::ParseExact($endText, 'yyyy-MM-dd', [System.Globalization.CultureInfo]::InvariantCulture)
+    $daysLeft = [int][math]::Floor(($end - (Get-Date).Date).TotalDays)
+    $evidence.endOfServicing = $endText
+    $evidence.daysLeft = $daysLeft
+    if ($daysLeft -lt 0) {
+        Add-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Status 'fail' -Title 'This Windows version is out of servicing' `
+            -Detail ("{0} ({1}) got its last security update on {2}. Install a current feature update." -f $entry.Name, $edition, $endText) -Evidence $evidence
+    }
+    elseif ($daysLeft -le $ServicingWarnDays) {
+        Add-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Status 'warn' -Title 'This Windows version reaches end of servicing soon' `
+            -Detail ("{0} ({1}) is serviced until {2} ({3} days left)." -f $entry.Name, $edition, $endText, $daysLeft) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'WU.OSVERSION.EOS' -Area 'patching' -Status 'pass' -Title 'This Windows version is in servicing' `
+            -Detail ("{0} is serviced until {1}." -f $entry.Name, $endText) -Evidence $evidence
+    }
+}
+#endregion
+
+#region Intune: app installations and policy errors
+Invoke-Check -Id 'MDM.APP.INSTALLFAILED' -Area 'intune' -Title 'Intune app installations' -Script {
+    $root = 'HKLM:\SOFTWARE\Microsoft\IntuneManagementExtension\Win32Apps'
+    if (-not (Test-Path -LiteralPath $root)) {
+        Add-Check -Id 'MDM.APP.INSTALLFAILED' -Area 'intune' -Status 'info' -Title 'No Win32 app state on this device'
+        return
+    }
+    # Each app has an EnforcementStateMessage (JSON). EnforcementState 5000-5999 means the installation failed.
+    $failed = @{}
+    $total = @{}
+    foreach ($key in @(Get-ChildItem -LiteralPath $root -Recurse -ErrorAction SilentlyContinue)) {
+        $raw = $key.GetValue('EnforcementStateMessage')
+        if (-not ($raw -is [string]) -or -not $raw) { continue }
+        if ($key.Name -notmatch '([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})_\d+') { continue }
+        $appId = $Matches[1].ToLower()
+        $state = $null
+        try { $state = $raw | ConvertFrom-Json -ErrorAction Stop } catch { continue }
+        $enforcement = 0
+        $errorCode = 0
+        foreach ($property in $state.PSObject.Properties) {
+            if ($property.Name -eq 'EnforcementState') { try { $enforcement = [int]$property.Value } catch { } }
+            if ($property.Name -eq 'ErrorCode' -and $null -ne $property.Value) { try { $errorCode = [int64]$property.Value } catch { } }
+        }
+        $total[$appId] = $true
+        if ($enforcement -ge 5000 -and $enforcement -le 5999) {
+            $failed[$appId] = [ordered]@{ appId = $appId; enforcementState = $enforcement; errorCode = ('0x{0:X8}' -f ($errorCode -band 0xFFFFFFFFL)) }
+        }
+    }
+    $evidence = [ordered]@{ appsWithState = $total.Count; failedApps = @($failed.Values | Select-Object -First 10) }
+    if ($failed.Count -gt 0) {
+        Add-Check -Id 'MDM.APP.INSTALLFAILED' -Area 'intune' -Status 'warn' -Title 'Intune app installations failed' `
+            -Detail ("{0} of {1} Win32 apps are in a failed state. Look up the app IDs in Intune (Apps > All apps, the ID is in the URL) and check AppWorkload.log." -f $failed.Count, $total.Count) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'MDM.APP.INSTALLFAILED' -Area 'intune' -Status 'pass' -Title 'No failed Win32 app installations' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'MDM.POLICY.ERRORS' -Area 'intune' -Title 'MDM policy errors' -Script {
+    if ($script:MdmEnrollmentIds.Count -eq 0) {
+        Add-Check -Id 'MDM.POLICY.ERRORS' -Area 'intune' -Status 'info' -Title 'MDM policy errors not checked: device is not enrolled'
+        return
+    }
+    $log = 'Microsoft-Windows-DeviceManagement-Enterprise-Diagnostics-Provider/Admin'
+    $events = @()
+    try { $events = @(Get-WinEvent -FilterHashtable @{ LogName = $log; Level = 2; StartTime = (Get-Date).AddDays(-$PolicyErrorDays) } -MaxEvents 500 -ErrorAction Stop) }
+    catch {
+        if ($_.Exception.Message -notmatch 'No events were found' -and $_.FullyQualifiedErrorId -notmatch 'NoMatchingEventsFound') { throw }
+    }
+    $top = @($events | Group-Object Id | Sort-Object Count -Descending | Select-Object -First 3 | ForEach-Object { [ordered]@{ eventId = [int]$_.Name; count = $_.Count } })
+    $sample = $null
+    if ($events.Count -gt 0) {
+        $sample = ([string]$events[0].Message -replace '\s+', ' ').Trim()
+        if ($sample.Length -gt 300) { $sample = $sample.Substring(0, 300) + '...' }
+    }
+    $evidence = [ordered]@{ days = $PolicyErrorDays; errorCount = $events.Count; topEventIds = $top; newestMessage = $sample }
+    if ($events.Count -ge $MinPolicyErrors) {
+        Add-Check -Id 'MDM.POLICY.ERRORS' -Area 'intune' -Status 'warn' -Title 'MDM policies fail to apply' `
+            -Detail ("{0} error events in the last {1} days in the MDM diagnostics log. Newest: {2}" -f $events.Count, $PolicyErrorDays, $sample) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'MDM.POLICY.ERRORS' -Area 'intune' -Status 'pass' -Title 'No unusual number of MDM policy errors' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Identity: Windows Hello for Business
+Invoke-Check -Id 'AAD.WHFB.NOTPROVISIONED' -Area 'identity' -Title 'Windows Hello for Business' -Script {
+    $policy = ((Get-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\PassportForWork' -Name 'Enabled') -eq 1) -or ($script:Dsreg['PolicyEnabled'] -eq 'YES')
+    if (-not $policy -and $device.tenantId) {
+        $policy = (Get-RegValue -Path ("HKLM:\SOFTWARE\Microsoft\Policies\PassportForWork\{0}\Device\Policies" -f $device.tenantId) -Name 'UsePassportForWork') -eq 1
+    }
+    $evidence = [ordered]@{
+        policyEnabled = $policy
+        ngcSet        = $script:Dsreg['NgcSet']
+        preReqResult  = $script:Dsreg['PreReqResult']
+        deviceEligible = $script:Dsreg['DeviceEligible']
+    }
+    if ($isSystem -or -not $script:Dsreg.ContainsKey('NgcSet')) {
+        Add-Check -Id 'AAD.WHFB.NOTPROVISIONED' -Area 'identity' -Status 'info' -Title 'Windows Hello for Business not checked' `
+            -Detail 'It can only be checked in the context of the signed-in user.' -Evidence $evidence
+    }
+    elseif ($script:Dsreg['NgcSet'] -eq 'YES') {
+        Add-Check -Id 'AAD.WHFB.NOTPROVISIONED' -Area 'identity' -Status 'pass' -Title 'Windows Hello for Business is set up for this user' -Evidence $evidence
+    }
+    elseif ($policy) {
+        Add-Check -Id 'AAD.WHFB.NOTPROVISIONED' -Area 'identity' -Status 'warn' -Title 'Windows Hello for Business is enabled by policy but not set up' `
+            -Detail ("Prerequisite check result: {0}." -f $(if ($script:Dsreg['PreReqResult']) { $script:Dsreg['PreReqResult'] } else { 'not reported' })) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'AAD.WHFB.NOTPROVISIONED' -Area 'identity' -Status 'info' -Title 'Windows Hello for Business is not enabled by policy' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Security: Secure Boot certificates, LAPS, firewall
+Invoke-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Title 'Secure Boot certificates' -Script {
+    if (-not $isElevated) {
+        Add-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Status 'unknown' -Title 'Secure Boot certificates not checked' -Detail 'Needs elevation.'
+        return
+    }
+    $secureBoot = $false
+    try { $secureBoot = [bool](Confirm-SecureBootUEFI -ErrorAction Stop) } catch { $secureBoot = $false }
+    if (-not $secureBoot) {
+        Add-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Status 'info' -Title 'Secure Boot is off or not supported: certificates not checked'
+        return
+    }
+    $servicing = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
+    $status = [string](Get-RegValue -Path $servicing -Name 'UEFICA2023Status')
+    $errorCode = Get-RegValue -Path $servicing -Name 'UEFICA2023Error'
+    $firmware = @{ db = $null; KEK = $null }
+    foreach ($pair in @(@('db', 'Windows UEFI CA 2023'), @('KEK', 'Microsoft Corporation KEK 2K CA 2023'))) {
+        try {
+            $bytes = (Get-SecureBootUEFI -Name $pair[0] -ErrorAction Stop).Bytes
+            $firmware[$pair[0]] = ([System.Text.Encoding]::ASCII.GetString($bytes) -match [regex]::Escape($pair[1]))
+        }
+        catch { }
+    }
+    $evidence = [ordered]@{
+        uefiCa2023Status = $status
+        uefiCa2023Error  = $(if ($errorCode) { '0x{0:X8}' -f ([int64]$errorCode -band 0xFFFFFFFFL) } else { $null })
+        dbHasWindowsUefiCa2023 = $firmware.db
+        kekHasKek2kCa2023      = $firmware.KEK
+        availableUpdates = Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot' -Name 'AvailableUpdates'
+    }
+    if ($status -eq 'Updated' -or (-not $status -and $firmware.db -eq $true -and $firmware.KEK -eq $true)) {
+        Add-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Status 'pass' -Title 'The 2023 Secure Boot certificates are installed' -Evidence $evidence
+    }
+    elseif ($status -eq 'InProgress' -and -not $errorCode) {
+        Add-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Status 'warn' -Title 'Secure Boot certificate update is in progress' `
+            -Detail 'Windows is installing the 2023 certificates. Restart the device (it can need two restarts).' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SEC.SECUREBOOT.CERT2023' -Area 'security' -Status 'fail' -Title 'The 2023 Secure Boot certificates are not installed' `
+            -Detail 'The Microsoft Secure Boot certificates from 2011 expired in 2026. Without the 2023 certificates the device gets no new Secure Boot protections and no new boot manager.' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'SEC.LAPS.BACKUPFAILED' -Area 'security' -Title 'Windows LAPS' -Script {
+    $directory = $null
+    foreach ($path in 'HKLM:\SOFTWARE\Microsoft\Policies\LAPS', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\LAPS', 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\LAPS\Config') {
+        $value = Get-RegValue -Path $path -Name 'BackupDirectory'
+        if ($null -ne $value -and $null -eq $directory) { $directory = [int]$value }
+    }
+    if (-not $directory) {
+        Add-Check -Id 'SEC.LAPS.BACKUPFAILED' -Area 'security' -Status 'info' -Title 'No Windows LAPS policy on this device'
+        return
+    }
+    $target = if ($directory -eq 1) { 'Entra ID' } else { 'Active Directory' }
+    $last = $null
+    try { $last = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-LAPS/Operational'; Id = 10004, 10005 } -MaxEvents 1 -ErrorAction Stop } catch { }
+    $evidence = [ordered]@{ backupDirectory = $target; lastResultEventId = $null; lastResultTime = $null }
+    if ($last) { $evidence.lastResultEventId = $last.Id; $evidence.lastResultTime = $last.TimeCreated.ToString('o') }
+    if ($last -and $last.Id -eq 10005) {
+        $message = ([string]$last.Message -replace '\s+', ' ').Trim()
+        if ($message.Length -gt 300) { $message = $message.Substring(0, 300) + '...' }
+        Add-Check -Id 'SEC.LAPS.BACKUPFAILED' -Area 'security' -Status 'fail' -Title 'Windows LAPS policy processing fails' `
+            -Detail ("Backup to {0} failed: {1}" -f $target, $message) -Evidence $evidence
+    }
+    elseif ($last) {
+        Add-Check -Id 'SEC.LAPS.BACKUPFAILED' -Area 'security' -Status 'pass' -Title 'Windows LAPS policy processing works' -Detail ("Backup directory: {0}." -f $target) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SEC.LAPS.BACKUPFAILED' -Area 'security' -Status 'unknown' -Title 'Windows LAPS policy is set, but there is no processing result yet' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'SEC.FIREWALL.OFF' -Area 'security' -Title 'Windows Firewall' -Script {
+    $thirdParty = ''
+    try { $thirdParty = ((@(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName 'FirewallProduct' -ErrorAction Stop) | ForEach-Object { [string]$_.displayName }) -join ', ') } catch { }
+    $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop)
+    $off = @($profiles | Where-Object { [string]$_.Enabled -ne 'True' } | ForEach-Object { [string]$_.Name })
+    $evidence = [ordered]@{ profilesOff = $off; thirdPartyFirewall = $thirdParty }
+    if ($thirdParty) {
+        Add-Check -Id 'SEC.FIREWALL.OFF' -Area 'security' -Status 'info' -Title 'Another firewall product is registered' -Detail $thirdParty -Evidence $evidence
+    }
+    elseif ($off.Count -gt 0) {
+        Add-Check -Id 'SEC.FIREWALL.OFF' -Area 'security' -Status 'fail' -Title 'Windows Firewall profile is off' -Detail ('Off: ' + ($off -join ', ')) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SEC.FIREWALL.OFF' -Area 'security' -Status 'pass' -Title 'All Windows Firewall profiles are on' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Identity: Windows activation
+Invoke-Check -Id 'SYS.LICENSE.NOTACTIVATED' -Area 'identity' -Title 'Windows activation' -Script {
+    $products = @(Get-CimInstance -ClassName SoftwareLicensingProduct -Filter "ApplicationID='55c92734-d682-4d71-983e-d6ec3f16059f' AND PartialProductKey IS NOT NULL" -ErrorAction Stop)
+    $edition = [string](Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion' -Name 'EditionID')
+    $licensed = @($products | Where-Object { $_.LicenseStatus -eq 1 })
+    $evidence = [ordered]@{
+        edition  = $edition
+        products = @($products | ForEach-Object { [ordered]@{ name = [string]$_.Name; licenseStatus = [int]$_.LicenseStatus; channel = [string]$_.ProductKeyChannel } })
+    }
+    if ($licensed.Count -eq 0) {
+        Add-Check -Id 'SYS.LICENSE.NOTACTIVATED' -Area 'identity' -Status 'fail' -Title 'Windows is not activated' `
+            -Detail 'No Windows licence with status "Licensed" was found.' -Evidence $evidence
+    }
+    elseif ($edition -eq 'Professional' -and $device.entraJoined) {
+        Add-Check -Id 'SYS.LICENSE.NOTACTIVATED' -Area 'identity' -Status 'info' -Title 'Windows is activated as Pro' `
+            -Detail 'If the user has a Windows Enterprise E3/E5 licence, subscription activation should have switched the edition to Enterprise.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SYS.LICENSE.NOTACTIVATED' -Area 'identity' -Status 'pass' -Title 'Windows is activated' -Detail ("Edition: {0}." -f $edition) -Evidence $evidence
+    }
+}
+#endregion
+
+#region Apps: Microsoft Store, App Installer, Microsoft 365 Apps
+Invoke-Check -Id 'APP.STORE.BROKEN' -Area 'apps' -Title 'Microsoft Store and App Installer' -Script {
+    $disabled = @('AppXSvc', 'ClipSVC', 'InstallService' | Where-Object { (Get-RegValue -Path "HKLM:\SYSTEM\CurrentControlSet\Services\$_" -Name 'Start') -eq 4 })
+    $storeRemoved = (Get-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore' -Name 'RemoveWindowsStore') -eq 1
+    $problems = @()
+    $packages = [ordered]@{}
+    foreach ($name in 'Microsoft.WindowsStore', 'Microsoft.DesktopAppInstaller') {
+        if ($isElevated) { $found = @(Get-AppxPackage -AllUsers -Name $name -ErrorAction Stop) }
+        else { $found = @(Get-AppxPackage -Name $name -ErrorAction Stop) }
+        $package = $found | Sort-Object Version -Descending | Select-Object -First 1
+        if (-not $package) {
+            $packages[$name] = 'missing'
+            if (-not ($name -eq 'Microsoft.WindowsStore' -and $storeRemoved)) { $problems += "$name is not installed" }
+        }
+        else {
+            $packages[$name] = ('{0} ({1})' -f $package.Version, $package.Status)
+            if ([string]$package.Status -ne 'Ok') { $problems += "$name is damaged (status $($package.Status))" }
+        }
+    }
+    if ($disabled.Count -gt 0) { $problems += 'service disabled: ' + ($disabled -join ', ') }
+    $evidence = [ordered]@{ packages = $packages; disabledServices = $disabled; storeRemovedByPolicy = $storeRemoved; allUsers = $isElevated }
+    if ($problems.Count -gt 0) {
+        Add-Check -Id 'APP.STORE.BROKEN' -Area 'apps' -Status 'fail' -Title 'Microsoft Store or App Installer is broken' `
+            -Detail (($problems -join '; ') + '. Store apps from Intune and winget do not work.') -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'APP.STORE.BROKEN' -Area 'apps' -Status 'pass' -Title 'Microsoft Store and App Installer are OK' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'APP.M365.UPDATESTUCK' -Area 'apps' -Title 'Microsoft 365 Apps updates' -Script {
+    $config = 'HKLM:\SOFTWARE\Microsoft\Office\ClickToRun\Configuration'
+    $policy = 'HKLM:\SOFTWARE\Policies\Microsoft\office\16.0\common\officeupdate'
+    $version = [string](Get-RegValue -Path $config -Name 'VersionToReport')
+    if (-not $version) {
+        Add-Check -Id 'APP.M365.UPDATESTUCK' -Area 'apps' -Status 'info' -Title 'Microsoft 365 Apps (Click-to-Run) is not installed'
+        return
+    }
+    $configMgr = ([string](Get-RegValue -Path $config -Name 'OfficeMgmtCOM') -eq 'True') -or ((Get-RegValue -Path $policy -Name 'officemgmtcom') -eq 1)
+    $policyOff = (Get-RegValue -Path $policy -Name 'enableautomaticupdates') -eq 0
+    $serviceStart = Get-RegValue -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\ClickToRunSvc' -Name 'Start'
+    $taskState = $null
+    $daysSinceTask = $null
+    $task = Get-ScheduledTask -TaskPath '\Microsoft\Office\' -TaskName 'Office Automatic Updates 2.0' -ErrorAction SilentlyContinue
+    if ($task) {
+        $taskState = [string]$task.State
+        $info = $task | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+        if ($info) { $daysSinceTask = ConvertTo-DaysAgo $info.LastRunTime }
+    }
+    $evidence = [ordered]@{
+        version = $version
+        updatesEnabled = [string](Get-RegValue -Path $config -Name 'UpdatesEnabled')
+        clickToRunSvcStart = $serviceStart
+        updateTaskState = $taskState
+        daysSinceUpdateTaskRun = $daysSinceTask
+        managedByConfigMgr = $configMgr
+        updatesOffByPolicy = $policyOff
+    }
+    if ($configMgr -or $policyOff) {
+        Add-Check -Id 'APP.M365.UPDATESTUCK' -Area 'apps' -Status 'info' -Title 'Microsoft 365 Apps updates are managed elsewhere' `
+            -Detail $(if ($configMgr) { 'Configuration Manager manages the updates.' } else { 'A policy turns automatic updates off.' }) -Evidence $evidence
+        return
+    }
+    $problems = @()
+    if ($null -eq $serviceStart) { $problems += 'Click-to-Run service is missing' }
+    elseif ($serviceStart -eq 4) { $problems += 'Click-to-Run service is disabled' }
+    if ($evidence.updatesEnabled -eq 'False') { $problems += 'automatic updates are turned off' }
+    if (-not $taskState) { $problems += 'update task is missing' }
+    elseif ($taskState -eq 'Disabled') { $problems += 'update task is disabled' }
+    elseif ($null -ne $daysSinceTask -and $daysSinceTask -gt $MaxDaysSinceOfficeUpdateCheck) { $problems += ("no update check for {0} days" -f $daysSinceTask) }
+    if ($problems.Count -gt 0) {
+        Add-Check -Id 'APP.M365.UPDATESTUCK' -Area 'apps' -Status 'fail' -Title 'Microsoft 365 Apps cannot update' `
+            -Detail (("Version {0}: " -f $version) + ($problems -join '; ') + '.') -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'APP.M365.UPDATESTUCK' -Area 'apps' -Status 'pass' -Title 'Microsoft 365 Apps update mechanism is OK' -Detail ("Version {0}." -f $version) -Evidence $evidence
+    }
+}
+#endregion
+
+#region Network: TLS 1.2 and proxy
+Invoke-Check -Id 'NET.TLS12.DISABLED' -Area 'network' -Title 'TLS 1.2' -Script {
+    $client = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.2\Client'
+    $problems = @()
+    $evidence = [ordered]@{
+        schannelEnabled           = Get-RegValue -Path $client -Name 'Enabled'
+        schannelDisabledByDefault = Get-RegValue -Path $client -Name 'DisabledByDefault'
+        winHttpDefaultSecureProtocols      = Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp' -Name 'DefaultSecureProtocols'
+        winHttpDefaultSecureProtocols32bit = Get-RegValue -Path 'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Internet Settings\WinHttp' -Name 'DefaultSecureProtocols'
+    }
+    if ($evidence.schannelEnabled -eq 0) { $problems += 'SCHANNEL TLS 1.2 client is disabled' }
+    if ($evidence.schannelDisabledByDefault -eq 1) { $problems += 'SCHANNEL TLS 1.2 client is disabled by default' }
+    foreach ($name in 'winHttpDefaultSecureProtocols', 'winHttpDefaultSecureProtocols32bit') {
+        $value = $evidence[$name]
+        if ($null -ne $value -and (([int64]$value -band 0x800) -eq 0)) { $problems += ('WinHTTP DefaultSecureProtocols 0x{0:X} has no TLS 1.2' -f [int64]$value) }
+    }
+    if ($problems.Count -gt 0) {
+        Add-Check -Id 'NET.TLS12.DISABLED' -Area 'network' -Status 'fail' -Title 'TLS 1.2 is disabled' `
+            -Detail (($problems -join '; ') + '. Intune, Entra ID, Windows Update and Defender need TLS 1.2.') -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'NET.TLS12.DISABLED' -Area 'network' -Status 'pass' -Title 'TLS 1.2 is not disabled' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Title 'Proxy for system services' -Script {
+    if ($isSystem) {
+        Add-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Status 'info' -Title 'Proxy settings not compared' `
+            -Detail 'The proxy of the signed-in user can only be read in the context of that user.'
+        return
+    }
+    $userKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings'
+    $userProxy = ((Get-RegValue -Path $userKey -Name 'ProxyEnable') -eq 1 -and [string](Get-RegValue -Path $userKey -Name 'ProxyServer')) -or
+                 [bool][string](Get-RegValue -Path $userKey -Name 'AutoConfigURL')
+    $winHttp = Test-WinHttpProxyConfigured
+    $evidence = [ordered]@{ userProxyConfigured = [bool]$userProxy; winHttpProxyConfigured = $winHttp; directConnection = $null }
+    if (-not $userProxy -or $winHttp) {
+        Add-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Status 'pass' -Title 'User and system proxy settings match' -Evidence $evidence
+        return
+    }
+    if ($SkipNetwork) {
+        Add-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Status 'unknown' -Title 'User has a proxy, system services have none (direct connection not tested)' -Evidence $evidence
+        return
+    }
+    $direct = Test-TcpPort -HostName 'login.microsoftonline.com' -Port 443 -TimeoutMs $NetworkTimeoutMs
+    $evidence.directConnection = $direct
+    if ($direct) {
+        Add-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Status 'pass' -Title 'User has a proxy, system services connect directly' `
+            -Detail 'No WinHTTP proxy is set, but the direct connection works.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'NET.PROXY.MISMATCH' -Area 'network' -Status 'fail' -Title 'The user has a proxy, but system services have none' `
+            -Detail 'Windows Update, Intune and Defender run as SYSTEM and use the WinHTTP proxy. None is set and the direct connection fails.' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Defender: passive mode, platform version, attack surface reduction
+Invoke-Check -Id 'DEF.PASSIVE.NOAV' -Area 'defender' -Title 'Defender passive mode' -Script {
+    if (-not $script:Mp) {
+        Add-Check -Id 'DEF.PASSIVE.NOAV' -Area 'defender' -Status 'unknown' -Title 'Defender running mode unknown' -Detail $script:MpError
+        return
+    }
+    $mode = [string]$script:Mp.AMRunningMode
+    $others = @()
+    try {
+        $others = @(Get-CimInstance -Namespace 'root/SecurityCenter2' -ClassName 'AntiVirusProduct' -ErrorAction Stop |
+            Where-Object { [string]$_.displayName -notmatch 'Defender' } | ForEach-Object { [string]$_.displayName })
+    }
+    catch { }
+    $evidence = [ordered]@{ runningMode = $mode; otherAntivirus = $others }
+    if ($mode -match 'Passive' -and $others.Count -eq 0) {
+        Add-Check -Id 'DEF.PASSIVE.NOAV' -Area 'defender' -Status 'fail' -Title 'Defender is in passive mode, but no other antivirus is registered' `
+            -Detail 'Nothing protects this device in real time.' -Evidence $evidence
+    }
+    elseif ($mode -match 'Passive') {
+        Add-Check -Id 'DEF.PASSIVE.NOAV' -Area 'defender' -Status 'info' -Title 'Defender is in passive mode next to another antivirus' -Detail ($others -join ', ') -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'DEF.PASSIVE.NOAV' -Area 'defender' -Status 'pass' -Title 'Defender is the active antivirus' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'DEF.PLATFORM.OUTDATED' -Area 'defender' -Title 'Defender platform version' -Script {
+    if (-not $script:Mp) {
+        Add-Check -Id 'DEF.PLATFORM.OUTDATED' -Area 'defender' -Status 'unknown' -Title 'Defender platform version unknown' -Detail $script:MpError
+        return
+    }
+    # The platform version is 4.18.YYMM.x (for example 4.18.26040.7 = April 2026).
+    $version = [string]$script:Mp.AMProductVersion
+    $months = $null
+    if ($version -match '^\d+\.\d+\.(\d{2})(\d{2})\d*\.') {
+        $year = 2000 + [int]$Matches[1]
+        $month = [int]$Matches[2]
+        if ($month -ge 1 -and $month -le 12) {
+            $now = Get-Date
+            $months = ($now.Year - $year) * 12 + ($now.Month - $month)
+        }
+    }
+    $evidence = [ordered]@{ platformVersion = $version; engineVersion = [string]$script:Mp.AMEngineVersion; ageMonths = $months }
+    if ($null -eq $months) {
+        Add-Check -Id 'DEF.PLATFORM.OUTDATED' -Area 'defender' -Status 'info' -Title 'Defender platform age could not be read from the version' -Evidence $evidence
+    }
+    elseif ($months -gt $MaxPlatformAgeMonths) {
+        Add-Check -Id 'DEF.PLATFORM.OUTDATED' -Area 'defender' -Status 'warn' -Title 'Defender platform is outdated' `
+            -Detail ("Platform {0} is about {1} months old (limit {2}). Platform updates come monthly through Windows Update." -f $version, $months, $MaxPlatformAgeMonths) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'DEF.PLATFORM.OUTDATED' -Area 'defender' -Status 'pass' -Title 'Defender platform is current' -Detail ("Platform {0}." -f $version) -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'DEF.ASR.NOTCONFIGURED' -Area 'defender' -Title 'Attack surface reduction rules' -Script {
+    if (-not $script:Mp) {
+        Add-Check -Id 'DEF.ASR.NOTCONFIGURED' -Area 'defender' -Status 'unknown' -Title 'Attack surface reduction state unknown' -Detail $script:MpError
+        return
+    }
+    if ([string]$script:Mp.AMRunningMode -match 'Passive') {
+        Add-Check -Id 'DEF.ASR.NOTCONFIGURED' -Area 'defender' -Status 'info' -Title 'Attack surface reduction not checked: Defender is in passive mode'
+        return
+    }
+    $preference = Get-MpPreference -ErrorAction Stop
+    $actions = @($preference.AttackSurfaceReductionRules_Actions | Where-Object { $null -ne $_ })
+    $evidence = [ordered]@{
+        rules   = $actions.Count
+        block   = @($actions | Where-Object { $_ -eq 1 }).Count
+        audit   = @($actions | Where-Object { $_ -eq 2 }).Count
+        warn    = @($actions | Where-Object { $_ -eq 6 }).Count
+    }
+    if (($evidence.block + $evidence.audit + $evidence.warn) -eq 0) {
+        Add-Check -Id 'DEF.ASR.NOTCONFIGURED' -Area 'defender' -Status 'warn' -Title 'No attack surface reduction rule is active' `
+            -Detail 'Ignore this if your organisation does not use ASR rules.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'DEF.ASR.NOTCONFIGURED' -Area 'defender' -Status 'pass' -Title 'Attack surface reduction rules are active' `
+            -Detail ("{0} block, {1} audit, {2} warn." -f $evidence.block, $evidence.audit, $evidence.warn) -Evidence $evidence
     }
 }
 #endregion

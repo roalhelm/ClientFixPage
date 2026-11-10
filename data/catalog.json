@@ -510,6 +510,261 @@
         "GPO: Windows Components > Windows Update > Do not include drivers with Windows Updates = Not configured",
         "Co-managed with WSUS for drivers: move the Windows Update policies workload to Intune or approve drivers in WSUS"
       ]
+    },
+    {
+      "id": "SEC.SECUREBOOT.CERT2023",
+      "area": "security",
+      "title": "Secure Boot 2023 certificates not installed",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/SecureBootCert2023/Remediate-SecureBootCert2023.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/SecureBootCert2023/Remediate-SecureBootCert2023.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-SecureBootCert2023.ps1",
+      "risk": "medium",
+      "note": "Changes firmware variables: sets AvailableUpdates to 0x5944 and starts the task Secure-Boot-Update, the method Microsoft documents for IT-managed devices. Windows then installs the 2023 certificates and the 2023 boot manager; this needs one or two restarts. Test it on each device model first and install the current BIOS/UEFI of the OEM, old firmware is the usual reason for failures. The 2011 certificates expired in 2026."
+    },
+    {
+      "id": "MDM.APP.INSTALLFAILED",
+      "area": "intune",
+      "title": "Intune app installations fail (Win32 apps)",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/RepairIntuneWin32Apps/remediateIntuneWin32Apps.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/RepairIntuneWin32Apps/remediateIntuneWin32Apps.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediateIntuneWin32Apps.ps1",
+      "risk": "medium",
+      "note": "Backs up and deletes the Win32 app state of the Intune Management Extension, restarts it and resets Company Portal, so every assigned app is evaluated again. Apps that are already installed are detected and not reinstalled as long as their detection rule works; apps without a working detection rule are installed again. If only one app fails, check its install command and detection rule in AppWorkload.log first."
+    },
+    {
+      "id": "SYS.UPTIME.LONG",
+      "area": "patching",
+      "title": "No real restart for more than 14 days",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/LongUptime/Remediate-LongUptime.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/LongUptime/Remediate-LongUptime.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-LongUptime.ps1",
+      "risk": "low",
+      "note": "Turns off Fast Startup, so the next shutdown by the user is a real restart. The script never restarts the device itself. To enforce restarts, set a deadline in the update ring."
+    },
+    {
+      "id": "WU.UPDATES.PAUSED",
+      "area": "patching",
+      "title": "Windows updates paused on the device",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/UpdatesPaused/Remediate-UpdatesPaused.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/UpdatesPaused/Remediate-UpdatesPaused.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-UpdatesPaused.ps1",
+      "risk": "low",
+      "note": "Removes the pause a user set in Settings > Windows Update and starts an update scan. A pause set by an update ring or Group Policy is not changed. To stop users from pausing again, block the pause option in the update ring."
+    },
+    {
+      "id": "WU.DO.BROKEN",
+      "area": "patching",
+      "title": "Delivery Optimization disabled or bypassed",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/DeliveryOptimization/Remediate-DeliveryOptimization.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/DeliveryOptimization/Remediate-DeliveryOptimization.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DeliveryOptimization.ps1",
+      "risk": "low",
+      "note": "Sets the Delivery Optimization service back to Automatic (delayed start) and starts it. Download mode 100 (Bypass) comes from a policy and is only reported: set the policy to 0 (HTTP only) or 1 (LAN)."
+    },
+    {
+      "id": "WU.OSVERSION.EOS",
+      "area": "patching",
+      "title": "Windows version out of servicing or close to it",
+      "severity": "high",
+      "status": "manual",
+      "risk": "low",
+      "note": "A version that is out of servicing gets no security updates any more. The fix is a feature update, not a script.",
+      "manualSteps": [
+        "Intune: Devices > Windows updates > Feature updates > create or edit a policy with a version that is in servicing, assign it to the device group",
+        "Check that nothing pins the old version: update ring deferral, TargetReleaseVersion in Settings catalog or Group Policy",
+        "If the device does not get the update, look at WU.FEATUREUPDATE.BLOCKED (safeguard hold) and at the hardware requirements for the target version",
+        "Devices that cannot be upgraded: replace them, or buy Extended Security Updates where Microsoft offers them"
+      ]
+    },
+    {
+      "id": "SEC.LAPS.BACKUPFAILED",
+      "area": "security",
+      "title": "Windows LAPS does not back up the password",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/LapsBackup/Remediate-LapsBackup.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/LapsBackup/Remediate-LapsBackup.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-LapsBackup.ps1",
+      "risk": "low",
+      "note": "Runs the Windows LAPS policy processing again and reports the result. If it still fails, the output names the LAPS error event. Typical causes outside the device: LAPS not enabled in Entra ID (Devices > Device settings), the managed local account does not exist, or no connection to a domain controller."
+    },
+    {
+      "id": "SEC.FIREWALL.OFF",
+      "area": "security",
+      "title": "Windows Firewall profile turned off",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/FirewallOff/Remediate-FirewallOff.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/FirewallOff/Remediate-FirewallOff.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-FirewallOff.ps1",
+      "risk": "low",
+      "note": "Starts the firewall service and turns on the profiles that are off. Rules are not changed. If a profile stays off, a Group Policy or Intune policy turns it off: change it there (Endpoint security > Firewall). Devices with another registered firewall product are skipped."
+    },
+    {
+      "id": "APP.STORE.BROKEN",
+      "area": "apps",
+      "title": "Microsoft Store or App Installer (winget) broken",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/StoreAppInstaller/Remediate-StoreAppInstaller.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/StoreAppInstaller/Remediate-StoreAppInstaller.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-StoreAppInstaller.ps1",
+      "risk": "low",
+      "note": "Run as SYSTEM or admin it enables the services AppXSvc, ClipSVC and InstallService again. Run as the signed-in user it registers Microsoft Store and App Installer again for that user from the copy on the device (no download, app data is kept). App packages are per user, so a damaged package needs the run in the user context."
+    },
+    {
+      "id": "APP.M365.UPDATESTUCK",
+      "area": "apps",
+      "title": "Microsoft 365 Apps do not update",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/M365AppsUpdate/Remediate-M365AppsUpdate.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/M365AppsUpdate/Remediate-M365AppsUpdate.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-M365AppsUpdate.ps1",
+      "risk": "low",
+      "note": "Enables the Click-to-Run service, the automatic update setting and the update task, then starts an update in the background without closing open Office apps. Channel and update source are not changed. Devices managed by Configuration Manager or with updates turned off by policy are skipped."
+    },
+    {
+      "id": "DEF.PASSIVE.NOAV",
+      "area": "defender",
+      "title": "Defender in passive mode without another antivirus",
+      "severity": "high",
+      "status": "manual",
+      "risk": "low",
+      "note": "Defender only scans in real time when it is the active antivirus. Passive mode without another product usually comes from a leftover of an uninstalled antivirus or from the ForceDefenderPassiveMode setting.",
+      "manualSteps": [
+        "Remove leftovers of the old antivirus with the vendor's removal tool, then restart",
+        "Check HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Advanced Threat Protection, value ForceDefenderPassiveMode: it must not be 1 on clients (remove the policy that sets it)",
+        "Run Get-MpComputerStatus | Select AMRunningMode: it should show Normal after the restart",
+        "If it stays passive: run the Defender service remediation (DEF.SERVICE.STOPPED) and check the Security Center for registered products"
+      ]
+    },
+    {
+      "id": "DEF.PLATFORM.OUTDATED",
+      "area": "defender",
+      "title": "Defender platform outdated",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "The Defender platform (KB4052623) is updated monthly through Windows Update, separately from the signatures. An old platform usually means Windows Update itself does not work or the Defender update channel is pinned.",
+      "manualSteps": [
+        "Fix the Windows Update findings of this report first (scan, pause, policy conflicts)",
+        "Then run: \"%ProgramFiles%\\Windows Defender\\MpCmdRun.exe\" -SignatureUpdate -MMPC, and start an update scan in Settings",
+        "Check the channel policies (Settings catalog > Defender > Platform Updates Channel / Engine Updates Channel): a pinned or very slow channel keeps old versions",
+        "For a single device: install the current platform package for KB4052623 from the Microsoft Update Catalog"
+      ]
+    },
+    {
+      "id": "DEF.ASR.NOTCONFIGURED",
+      "area": "defender",
+      "title": "No attack surface reduction rule active",
+      "severity": "low",
+      "status": "manual",
+      "risk": "low",
+      "note": "ASR rules are set by policy, not on the device. Ignore this finding if your organisation does not use them.",
+      "manualSteps": [
+        "Intune: Endpoint security > Attack surface reduction > Create policy > Windows > Attack Surface Reduction Rules",
+        "Start the rules in Audit mode, check the results in the Defender portal (Reports > Attack surface reduction rules), then switch to Block",
+        "Assign the policy to the device group and sync the device",
+        "Check on the device: Get-MpPreference | Select AttackSurfaceReductionRules_Ids, AttackSurfaceReductionRules_Actions"
+      ]
+    },
+    {
+      "id": "AAD.WHFB.NOTPROVISIONED",
+      "area": "identity",
+      "title": "Windows Hello for Business not set up",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "The policy asks for Windows Hello for Business, but the user has no Hello credential. The reason is in the prerequisite check of dsregcmd.",
+      "manualSteps": [
+        "As the user run dsregcmd /status and read the section 'Ngc Prerequisite Check': the lines that say NO name the cause",
+        "No Primary Refresh Token: fix AAD.PRT.MISSING first",
+        "TPM not ready: fix BL.TPM.NOTREADY first",
+        "Hybrid join with key or certificate trust: check that the domain controllers and the sync of the device and key are in place, or switch to cloud Kerberos trust",
+        "Start the setup again: sign out and in, or Settings > Accounts > Sign-in options > PIN (Windows Hello)",
+        "Details are in Event Viewer > Applications and Services Logs > Microsoft > Windows > User Device Registration > Admin (events 358 to 362)"
+      ]
+    },
+    {
+      "id": "MDM.POLICY.ERRORS",
+      "area": "intune",
+      "title": "MDM policies fail to apply",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "Many error events in the MDM diagnostics log mean that policies from Intune are rejected by the device. The event text names the policy (CSP path) and the error code.",
+      "manualSteps": [
+        "Open Event Viewer > Applications and Services Logs > Microsoft > Windows > DeviceManagement-Enterprise-Diagnostics-Provider > Admin and read the newest errors (event 404 = a setting was rejected)",
+        "Find the policy from the CSP path in the event (for example ./Device/Vendor/MSFT/Policy/Config/Update/...) in Intune: Devices > the device > Device configuration shows the profiles in state Error or Conflict",
+        "Typical causes: setting not supported by this edition or version, two profiles set the same setting to different values, or a leftover Group Policy wins",
+        "Create a full report on the device: Settings > Accounts > Access work or school > the connection > Info > Create report",
+        "If almost everything fails, the enrollment itself is damaged: see MDM.ENROLLMENT.BROKEN"
+      ]
+    },
+    {
+      "id": "SYS.LICENSE.NOTACTIVATED",
+      "area": "identity",
+      "title": "Windows activation fails or stays on Pro",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "Subscription activation switches Windows Pro to Enterprise when a user with a Windows Enterprise E3/E5 licence signs in on an Entra joined device. It cannot be forced by a script.",
+      "manualSteps": [
+        "Check the licence of the user in Entra ID: Windows 10/11 Enterprise must be in an assigned licence",
+        "The device must be Entra joined or hybrid joined, activated as Pro and the user must have a Primary Refresh Token (see AAD.PRT.MISSING)",
+        "Conditional Access: exclude the app 'Universal Store Service APIs and Web Application' (45a330b1-b1ec-4cc1-9161-9f03992aa49f) from policies that require MFA or a compliant device, otherwise the licence check fails silently",
+        "On the device: Settings > System > Activation shows the state and error; run the task \\Microsoft\\Windows\\Subscription\\EnableLicenseAcquisition and sign out and in",
+        "Windows not activated at all: check the firmware key with (Get-CimInstance SoftwareLicensingService).OA3xOriginalProductKey and activate with it, or contact the OEM"
+      ]
+    },
+    {
+      "id": "NET.TLS12.DISABLED",
+      "area": "network",
+      "title": "TLS 1.2 disabled",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/Tls12Disabled/Remediate-Tls12.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/Tls12Disabled/Remediate-Tls12.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-Tls12.ps1",
+      "risk": "low",
+      "note": "Corrects only the registry values that disable TLS 1.2 (SCHANNEL client and WinHTTP DefaultSecureProtocols). Other protocols and ciphers are not changed. Restart the device afterwards. If a Group Policy writes these values, fix the policy too."
+    },
+    {
+      "id": "NET.PROXY.MISMATCH",
+      "area": "network",
+      "title": "User has a proxy, system services have none",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "Windows Update, Intune and Defender run as SYSTEM and use the machine-wide WinHTTP proxy, not the proxy of the user. So the browser works while management traffic fails.",
+      "manualSteps": [
+        "Best: allow the Microsoft endpoints for Intune, Windows Update and Defender directly on the firewall, without proxy authentication",
+        "Or set the machine proxy by policy: Settings catalog > Network Proxy (per-machine proxy), or WPAD/PAC that also works for the SYSTEM account",
+        "For a single device: netsh winhttp set proxy proxy-server=\"proxy:8080\" bypass-list=\"*.contoso.com\" (netsh winhttp reset proxy removes it)",
+        "A proxy that needs user authentication does not work for SYSTEM: exclude the Microsoft endpoints from authentication",
+        "Check again with the endpoint test (NET.ENDPOINT.UNREACHABLE)"
+      ]
     }
   ]
 }

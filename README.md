@@ -1,6 +1,6 @@
 # Client Fix Page
 
-A static web page that tells an admin which script to run so a Windows client is healthy again for patching, Intune enrollment, Entra ID join, BitLocker, drivers, Company Portal and Defender.
+A static web page that tells an admin which script to run so a Windows client is healthy again for patching, Intune enrollment, Entra ID join, BitLocker, drivers, Company Portal, Defender, Secure Boot certificates, LAPS, firewall, Microsoft Store and Microsoft 365 Apps.
 
 ## How it works
 
@@ -38,7 +38,7 @@ As SYSTEM the script switches to Intune mode by itself (Intune passes no paramet
 - The output is one line with the overall state and the finding IDs, shown in the remediation's device status (column "Pre-remediation detection output").
 - Exit code 1 when a check failed (device shows "With issues"), otherwise 0.
 
-As SYSTEM the user-only checks (Primary Refresh Token, Entra registration dual state) are reported as `info`.
+As SYSTEM the user-only checks (Primary Refresh Token, Entra registration dual state, Windows Hello for Business, user proxy) are reported as `info`.
 
 ## Repository layout
 
