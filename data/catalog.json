@@ -197,9 +197,13 @@
       "area": "defender",
       "title": "Defender antivirus or sensor service not running",
       "severity": "high",
-      "status": "planned",
-      "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "Service/Remediate-DefenderService.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/Service/Remediate-DefenderService.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderService.ps1",
+      "risk": "medium",
+      "note": "Does nothing when another antivirus is active. Removes leftover DisableAntiSpyware/DisableAntiVirus Group Policy values (key backed up to C:\\ProgramData\\DefenderFix\\Backup, skipped with a Configuration Manager client or -removePolicyBlocks 0) and starts WinDefend. ForceDefenderPassiveMode is only reported.",
       "manualSteps": [
         "Get-MpComputerStatus",
         "Check for third-party antivirus and tamper protection"
@@ -210,9 +214,13 @@
       "area": "defender",
       "title": "Defender signatures older than 3 days",
       "severity": "high",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "Signatures/Remediate-DefenderSignatures.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/Signatures/Remediate-DefenderSignatures.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderSignatures.ps1",
       "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "note": "Runs MpCmdRun -SignatureUpdate from the configured source, then directly from Microsoft (-MMPC), then once more after clearing only the cached dynamic signatures. Update source settings are not changed.",
       "manualSteps": [
         "\"%ProgramFiles%\\Windows Defender\\MpCmdRun.exe\" -SignatureUpdate"
       ]
@@ -222,9 +230,13 @@
       "area": "defender",
       "title": "Real-time or tamper protection disabled",
       "severity": "high",
-      "status": "planned",
-      "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "RealTimeProtection/Remediate-DefenderRealTimeProtection.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/RealTimeProtection/Remediate-DefenderRealTimeProtection.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderRealTimeProtection.ps1",
+      "risk": "medium",
+      "note": "Reports an Intune policy that switches protection off, removes leftover Real-Time Protection Group Policy values (backed up first, skipped with a Configuration Manager client or -removePolicyBlocks 0) and resets the local Defender preferences. Tamper protection can only be turned on from Intune.",
       "manualSteps": [
         "Get-MpComputerStatus",
         "Check Intune endpoint security antivirus policy"
@@ -235,9 +247,13 @@
       "area": "defender",
       "title": "Defender for Endpoint not onboarded or not reporting",
       "severity": "medium",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "MDEOnboarding/Remediate-MDEOnboarding.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/MDEOnboarding/Remediate-MDEOnboarding.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-MDEOnboarding.ps1",
       "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "note": "Installs the Sense capability when it is missing, checks that the Intune EDR onboarding policy has arrived, re-enables DiagTrack and starts Sense. Assign it only to devices that should be onboarded to Defender for Endpoint.",
       "manualSteps": [
         "Check HKLM:\\SOFTWARE\\Microsoft\\Windows Advanced Threat Protection\\Status OnboardingState",
         "Run the MDE Client Analyzer"
