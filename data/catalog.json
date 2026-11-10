@@ -168,6 +168,28 @@
       "note": "Direct TCP test: results are not reliable behind an explicit proxy."
     },
     {
+      "id": "MDM.ENROLLMENT.MISSING",
+      "area": "intune",
+      "title": "Device not enrolled in Intune",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/IntuneAutoEnroll/Remediate-IntuneAutoEnroll.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/IntuneAutoEnroll/Remediate-IntuneAutoEnroll.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-IntuneAutoEnroll.ps1",
+      "risk": "medium",
+      "note": "Triggers automatic enrollment (GPO task or deviceenroller /AutoEnrollMDM) and reports the enrollment error code. Intune cannot run a remediation on an unenrolled device: run it as SYSTEM with psexec -s, ConfigMgr or a GPO task, with the user signed in. The report detail names the cause; fix that first if it is the join or the MDM scope.",
+      "manualSteps": [
+        "Read the cause in the check detail: not Entra joined, no MDM URL, GPO missing, or an error code",
+        "Not Entra joined: fix AAD.PRT.MISSING or AAD.HYBRIDJOIN.PENDING first",
+        "No MDM URL: Entra admin center > Mobility (MDM and WIP) > Microsoft Intune > MDM user scope must include the user; check the Intune license",
+        "Hybrid joined without GPO: Computer Configuration > Administrative Templates > Windows Components > MDM > Enable automatic MDM enrollment using default Azure AD credentials (User Credential)",
+        "0x80180018: assign an Intune license. 0x8018002B: verify the UPN domain or add the user to the MDM scope. 0x80180014: check enrollment restrictions (platform, personal devices)",
+        "Entra joined (cloud) without automatic enrollment: Settings > Accounts > Access work or school > Enroll only in device management",
+        "Collect diagnostics: mdmdiagnosticstool.exe -area \"DeviceEnrollment;DeviceProvisioning;Autopilot\" -cab C:\\Temp\\mdm.cab"
+      ]
+    },
+    {
       "id": "MDM.SYNC.STALE",
       "area": "intune",
       "title": "No successful Intune sync for 7 days",
@@ -188,16 +210,14 @@
     {
       "id": "MDM.ENROLLMENT.BROKEN",
       "area": "intune",
-      "title": "MDM enrollment or device certificate broken",
+      "title": "MDM enrollment damaged or device certificate broken",
       "severity": "high",
       "status": "manual",
       "risk": "medium",
       "note": "Re-enrolling changes the device's management state, so it is a guided step, not an automatic script. Collect the MDM diagnostics first.",
       "manualSteps": [
         "Collect diagnostics: mdmdiagnosticstool.exe -area \"DeviceEnrollment;DeviceProvisioning;Autopilot\" -cab C:\\Temp\\mdm.cab",
-        "Not enrolled (Entra joined): check Entra admin center > Mobility (MDM and WIP) > Microsoft Intune > MDM user scope and the user's Intune license, then Settings > Accounts > Access work or school > Enroll only in device management",
-        "Not enrolled (hybrid joined with auto-enrollment GPO): run as SYSTEM: %windir%\\system32\\deviceenroller.exe /c /AutoEnrollMDM",
-        "Certificate missing or expired: delete the device in Intune, then enroll it again as above",
+        "Certificate missing or expired: delete the device in Intune, then enroll it again (see MDM.ENROLLMENT.MISSING)",
         "More than one enrollment: compare the enrollment IDs in the MDM diagnostics; remove the orphaned one only with the diagnostics in hand",
         "Certificate expires soon: it renews on a working sync, so fix MDM.SYNC.STALE first"
       ]
@@ -216,6 +236,32 @@
       "note": "Starts the Intune Management Extension when it is stopped. A missing IME is not reinstalled: assign a PowerShell script or Win32 app to the device so Intune deploys it again."
     },
     {
+      "id": "CP.APP.MISSING",
+      "area": "intune",
+      "title": "Company Portal not installed",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/ReinstallCompanyPortal/remediation.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/ReinstallCompanyPortal/remediation.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1",
+      "risk": "low",
+      "note": "Installs Company Portal (9WZDNCRFJ3PZ) from the Microsoft Store with winget as SYSTEM. As an Intune remediation pair use Detect-CompanyPortalMissing.ps1 from the same folder as detection. Better long term: assign Company Portal as a required Microsoft Store app in Intune."
+    },
+    {
+      "id": "CP.APP.BROKEN",
+      "area": "intune",
+      "title": "Company Portal damaged, hangs or sign-in fails",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/CompanyPortalReset/Reset-CompanyPortal.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/CompanyPortalReset/Reset-CompanyPortal.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Reset-CompanyPortal.ps1",
+      "risk": "low",
+      "note": "Resets Company Portal for the signed-in user (like Settings > Apps > Advanced options > Reset). Run it as the user, not as SYSTEM. The app stays installed and the enrollment is untouched; the user signs in to Company Portal again. Also helps when Company Portal shows a wrong compliance state or cannot install apps. If the package stays damaged, reinstall it (CP.APP.MISSING)."
+    },
+    {
       "id": "AAD.PRT.MISSING",
       "area": "identity",
       "title": "Entra join or Primary Refresh Token missing",
@@ -230,6 +276,54 @@
         "DeviceAuthStatus FAILED: the device object is disabled or deleted in Entra ID; enable it, or rejoin the device",
         "No PRT: lock and unlock or sign out and in again, then dsregcmd /refreshprt as the user; check time sync, access to login.microsoftonline.com and TPM health (tpm.msc)"
       ]
+    },
+    {
+      "id": "AAD.HYBRIDJOIN.PENDING",
+      "area": "identity",
+      "title": "Hybrid Entra join not completed",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/HybridJoin/Remediate-HybridJoin.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/HybridJoin/Remediate-HybridJoin.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-HybridJoin.ps1",
+      "risk": "low",
+      "note": "Enables the Automatic-Device-Join task and runs dsregcmd /join as SYSTEM, then reports the join error codes. The join only completes after Entra Connect has synced the computer object, so a first failure right after a new domain join is normal.",
+      "manualSteps": [
+        "Run dsregcmd /status and read Error Phase, Client ErrorCode and Server ErrorCode in the Diagnostic Data section",
+        "Entra Connect: the computer OU must be in sync scope and the object needs a userCertificate value; check that the device appears in Entra ID with join type Hybrid",
+        "SCP: Entra Connect > Configure device options must have created the service connection point for your tenant",
+        "Network: the device needs access to enterpriseregistration.windows.net, login.microsoftonline.com and device.login.microsoftonline.com as SYSTEM (proxy!)",
+        "Run as SYSTEM: dsregcmd /join, then sign out and in again"
+      ]
+    },
+    {
+      "id": "AAD.DUALSTATE",
+      "area": "identity",
+      "title": "Device Entra joined and also Entra registered",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "The user added the work account as a registered account on top of the join. This can break Conditional Access, SSO and Intune enrollment. Registration is per user, so it is a guided step in the user context.",
+      "manualSteps": [
+        "As the user: Settings > Accounts > Access work or school, disconnect the extra work account that is not the join",
+        "Or as the user: dsregcmd /cleanupaccounts, then sign out and in",
+        "Prevent it: set HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WorkplaceJoin BlockAADWorkplaceJoin = 1 (DWORD) through Intune or GPO",
+        "Check again with dsregcmd /status as the user: WorkplaceJoined must be NO"
+      ]
+    },
+    {
+      "id": "SYS.TIME.SKEW",
+      "area": "identity",
+      "title": "System clock wrong or Windows Time service disabled",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/TimeSync/Remediate-TimeSync.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/TimeSync/Remediate-TimeSync.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-TimeSync.ps1",
+      "risk": "low",
+      "note": "Restores the default start type of W32Time, runs w32tm /resync /force and, only if the clock is still more than 5 minutes off, sets it once from the HTTPS Date header of login.microsoftonline.com. The time source configuration is not changed."
     },
     {
       "id": "DEF.SERVICE.STOPPED",
@@ -310,6 +404,111 @@
       "manualSteps": [
         "Check HKLM:\\SOFTWARE\\Microsoft\\Windows Advanced Threat Protection\\Status OnboardingState",
         "Run the MDE Client Analyzer"
+      ]
+    },
+    {
+      "id": "BL.OSVOLUME.NOTENCRYPTED",
+      "area": "bitlocker",
+      "title": "OS drive not encrypted or BitLocker waiting for activation",
+      "severity": "high",
+      "status": "manual",
+      "risk": "medium",
+      "note": "Turning on encryption must go through your BitLocker policy so the recovery key is escrowed first, so this is a guided step. The check detail shows the last BitLocker error event, which usually names the cause.",
+      "manualSteps": [
+        "Read the last BitLocker error in the check detail (Event Viewer > Applications and Services Logs > Microsoft > Windows > BitLocker-API > Management)",
+        "Check that a disk encryption policy is assigned: Intune admin center > Endpoint security > Disk encryption, and the device status there",
+        "Silent encryption needs: a ready TPM (BL.TPM.NOTREADY), enabled WinRE (BL.WINRE.DISABLED), UEFI with Secure Boot, and no third-party encryption",
+        "Standard users: the policy must allow standard users to enable encryption during Entra join",
+        "\"Waiting for activation\" (encrypted, no protector): fixes itself once the policy applies; or run manage-bde -protectors -add C: -tpm, then BackupToAAD-BitLockerKeyProtector",
+        "After the fix: check the recovery key in Intune admin center > Devices > the device > Recovery keys"
+      ]
+    },
+    {
+      "id": "BL.PROTECTION.SUSPENDED",
+      "area": "bitlocker",
+      "title": "BitLocker protection suspended",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/BitLockerSuspended/Remediate-BitLockerSuspended.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/BitLockerSuspended/Remediate-BitLockerSuspended.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-BitLockerSuspended.ps1",
+      "risk": "low",
+      "note": "Runs Resume-BitLocker on the OS drive. Only for an indefinite suspension; a suspension with a restart count resumes by itself. Do not run it while a BIOS/firmware update waits for its restart."
+    },
+    {
+      "id": "BL.RECOVERYKEY.NOTESCROWED",
+      "area": "bitlocker",
+      "title": "BitLocker recovery key not backed up to Entra ID",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/BitLockerKeyBackup/Remediate-BitLockerKeyBackup.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/BitLockerKeyBackup/Remediate-BitLockerKeyBackup.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-BitLockerKeyBackup.ps1",
+      "risk": "low",
+      "note": "Adds a recovery password if none exists and backs up every recovery password to Entra ID. Harmless when the key is already there. Confirm afterwards in Intune admin center > Devices > the device > Recovery keys."
+    },
+    {
+      "id": "BL.WINRE.DISABLED",
+      "area": "bitlocker",
+      "title": "Windows Recovery Environment disabled",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/WinREDisabled/Remediate-WinRE.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/WinREDisabled/Remediate-WinRE.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-WinRE.ps1",
+      "risk": "low",
+      "note": "Runs reagentc /enable. Needed for silent BitLocker encryption, Autopilot reset and remote wipe. If it fails, Winre.wim is missing or the recovery partition is broken: see the steps.",
+      "manualSteps": [
+        "reagentc /info shows the state; reagentc /enable turns it on",
+        "Winre.wim missing in C:\\Windows\\System32\\Recovery: copy it from the install.wim of installation media with the same Windows build, then reagentc /enable",
+        "Recovery partition too small for WinRE updates: follow Microsoft KB5028997 (resize the partition), then reagentc /enable"
+      ]
+    },
+    {
+      "id": "BL.TPM.NOTREADY",
+      "area": "bitlocker",
+      "title": "TPM missing, not ready or only 1.2",
+      "severity": "high",
+      "status": "manual",
+      "risk": "medium",
+      "note": "TPM problems are fixed in the firmware or by the manufacturer, so this is a guided step. BitLocker, Windows Hello, the Entra device key and Autopilot depend on the TPM.",
+      "manualSteps": [
+        "Open tpm.msc (or Get-Tpm as admin) and read the status and the recommended action",
+        "TPM not found: enable it in the BIOS/UEFI (Intel PTT, AMD fTPM or Security Chip)",
+        "Not ready: install the latest BIOS/UEFI and TPM firmware from the manufacturer, then check again",
+        "Clearing the TPM (tpm.msc > Clear TPM) is a last resort: suspend BitLocker first and make sure the recovery key is backed up, because Windows Hello keys and virtual smart cards are lost",
+        "TPM 1.2: Windows 11 and Autopilot pre-provisioning need 2.0; some models can be switched with a firmware tool from the manufacturer"
+      ]
+    },
+    {
+      "id": "DRV.DEVICE.ERROR",
+      "area": "drivers",
+      "title": "Devices with driver problems",
+      "severity": "medium",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/DriverProblemDevices/Remediate-DriverProblems.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/DriverProblemDevices/Remediate-DriverProblems.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DriverProblems.ps1",
+      "risk": "low",
+      "note": "Rescans devices (pnputil /scan-devices) and installs the driver updates Windows Update offers for this device, then checks again. No driver is removed and no restart is forced. Devices that Windows Update has no driver for need the manufacturer driver (OEM tool or driver pack). For a guided choice of Windows, Office and driver updates there is Invoke-ManagedUpdates.ps1 in the TEST-TreiberUpdateScript repository."
+    },
+    {
+      "id": "DRV.WU.EXCLUDED",
+      "area": "drivers",
+      "title": "Driver updates from Windows Update blocked by policy",
+      "severity": "low",
+      "status": "manual",
+      "risk": "low",
+      "note": "Often intended (drivers from an OEM tool or ConfigMgr). If not, the policy must change where it is set, so this is a guided step.",
+      "manualSteps": [
+        "Find the source: HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsUpdate (GPO) or HKLM\\SOFTWARE\\Microsoft\\PolicyManager\\current\\device\\Update (Intune)",
+        "Intune: Update ring > Windows drivers = Allow, or manage drivers with Windows Autopatch / Intune driver update policies",
+        "GPO: Windows Components > Windows Update > Do not include drivers with Windows Updates = Not configured",
+        "Co-managed with WSUS for drivers: move the Windows Update policies workload to Intune or approve drivers in WSUS"
       ]
     }
   ]

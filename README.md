@@ -1,6 +1,6 @@
 # Client Fix Page
 
-A static web page that tells an admin which script to run so a Windows client is healthy again for patching, Intune, Entra ID and Defender.
+A static web page that tells an admin which script to run so a Windows client is healthy again for patching, Intune enrollment, Entra ID join, BitLocker, drivers, Company Portal and Defender.
 
 ## How it works
 
@@ -26,6 +26,19 @@ Run it elevated for complete results. Useful switches:
 | `-CopyToClipboard` | Copies the JSON so it can be pasted into the page |
 | `-OutputPath <file>` | Report path (default: `%TEMP%\ClientHealth-<name>.json`) |
 | `-SkipNetwork`, `-SkipUpdateScan`, `-SkipComponentStore` | Skip the slower checks |
+| `-IntuneMode` | Remediation mode (see below); on automatically when run as SYSTEM |
+
+## Run it as an Intune Remediation
+
+Upload `Get-ClientHealth.ps1` as the **detection script only** (Devices > Scripts and remediations > Remediations), run as SYSTEM in 64-bit PowerShell, schedule daily or run it on demand with "Run remediation".
+
+As SYSTEM the script switches to Intune mode by itself (Intune passes no parameters):
+
+- The report goes to `C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\ClientHealth-<COMPUTERNAME>.json`. That folder is included in **Collect diagnostics**, so you can get the JSON from the Intune admin center without touching the device.
+- The output is one line with the overall state and the finding IDs, shown in the remediation's device status (column "Pre-remediation detection output").
+- Exit code 1 when a check failed (device shows "With issues"), otherwise 0.
+
+As SYSTEM the user-only checks (Primary Refresh Token, Entra registration dual state) are reported as `info`.
 
 ## Repository layout
 

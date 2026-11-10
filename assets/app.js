@@ -15,6 +15,8 @@
     'manual': 'Step-by-step guide'
   };
 
+  var AREA_LABEL = { bitlocker: 'BitLocker' };
+
   var catalog = null;
   var catalogById = {};
   var report = null;
@@ -172,7 +174,7 @@
       var open = report.checks.filter(function (c) {
         return (area === 'all' || c.area === area) && (c.status === 'fail' || c.status === 'warn');
       }).length;
-      var button = el('button', 'btn small', (area === 'all' ? 'All areas' : area.charAt(0).toUpperCase() + area.slice(1)) + ' (' + open + ')');
+      var button = el('button', 'btn small', (area === 'all' ? 'All areas' : (AREA_LABEL[area] || area.charAt(0).toUpperCase() + area.slice(1))) + ' (' + open + ')');
       button.type = 'button';
       button.setAttribute('aria-pressed', String(areaFilter === area));
       button.setAttribute('data-area', area);
