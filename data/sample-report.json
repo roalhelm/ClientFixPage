@@ -37,7 +37,7 @@
     "WU.POLICY.WSUS_LEFTOVER",
     "SYS.DISK.LOWSPACE",
     "DEF.SIGNATURE.OUTDATED",
-    "DEF.RTP.DISABLED"
+    "DEF.TAMPER.OFF"
   ],
   "checks": [
     {
@@ -217,7 +217,7 @@
       }
     },
     {
-      "id": "DEF.RTP.DISABLED",
+      "id": "DEF.TAMPER.OFF",
       "area": "defender",
       "status": "warn",
       "title": "Tamper protection is off",

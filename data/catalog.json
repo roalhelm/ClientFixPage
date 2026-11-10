@@ -228,7 +228,7 @@
     {
       "id": "DEF.RTP.DISABLED",
       "area": "defender",
-      "title": "Real-time or tamper protection disabled",
+      "title": "Real-time protection disabled",
       "severity": "high",
       "status": "available",
       "repo": "https://github.com/roalhelm/WindowsDefenderFix",
@@ -240,6 +240,20 @@
       "manualSteps": [
         "Get-MpComputerStatus",
         "Check Intune endpoint security antivirus policy"
+      ]
+    },
+    {
+      "id": "DEF.TAMPER.OFF",
+      "area": "defender",
+      "title": "Tamper protection off",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "note": "No script can fix this: Windows only accepts tamper protection from Intune or the Defender portal, so that malware cannot switch it off either. Turn it on by policy.",
+      "manualSteps": [
+        "Intune: Endpoint security > Antivirus > Create policy > Windows > Windows Security Experience > TamperProtection (Device) = On, assign to the device group",
+        "Or tenant-wide: Microsoft Defender portal > Settings > Endpoints > Advanced features > Tamper protection = On (needs Defender for Endpoint)",
+        "Check that no Intune or Group Policy setting turns real-time protection off, then sync the device"
       ]
     },
     {
