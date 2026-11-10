@@ -38,13 +38,13 @@
       "area": "patching",
       "title": "Component store or system file corruption (DISM/SFC)",
       "severity": "high",
-      "status": "needs-fix",
+      "status": "available",
       "repo": "https://github.com/roalhelm/Windows-Update-Health-Remediation-Suite",
       "script": "src/intune/Remediate-WUHealth.ps1",
       "download": "https://raw.githubusercontent.com/roalhelm/Windows-Update-Health-Remediation-Suite/main/src/intune/Remediate-WUHealth.ps1",
       "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-WUHealth.ps1",
       "risk": "low",
-      "note": "Repairs only when DISM reports the store as repairable. Restart the device first if a reboot is pending."
+      "note": "Runs DISM /RestoreHealth and sfc /scannow when the store is repairable. If a servicing restart is outstanding, the script waits: restart the device and run it again."
     },
     {
       "id": "WU.POLICY.WSUS_LEFTOVER",
