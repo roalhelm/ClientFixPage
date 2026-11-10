@@ -40,7 +40,7 @@
     powershell.exe -ExecutionPolicy Bypass -File .\Get-ClientHealth.ps1 -CopyToClipboard
 
 .NOTES
-    Version : 0.1.0
+    Version : 0.1.1
     Requires: Windows PowerShell 5.1 or PowerShell 7
 #>
 [CmdletBinding()]
@@ -57,7 +57,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$ScriptVersion = '0.1.0'
+$ScriptVersion = '0.1.1'
 $SchemaVersion = '1.0'
 
 #region Thresholds
@@ -203,6 +203,32 @@ function Get-ShortHash {
     }
 }
 
+function Get-LatestEventTime {
+    # Returns the time of the newest matching event, or $null. Never throws.
+    param([string]$LogName, [string]$ProviderName, [int[]]$Id)
+    try {
+        $filter = @{ LogName = $LogName; Id = $Id }
+        if ($ProviderName) { $filter.ProviderName = $ProviderName }
+        $entry = Get-WinEvent -FilterHashtable $filter -MaxEvents 1 -ErrorAction Stop
+        if ($entry) { return $entry.TimeCreated }
+    }
+    catch { }
+    return $null
+}
+
+function Get-NewestDate {
+    # Returns the newest valid date from a list that may contain $null values.
+    param([object[]]$Dates)
+    $newest = $null
+    foreach ($d in $Dates) {
+        if (-not $d) { continue }
+        try { $dt = [datetime]$d } catch { continue }
+        if ($dt.Year -lt 2000) { continue }
+        if (-not $newest -or $dt -gt $newest) { $newest = $dt }
+    }
+    return $newest
+}
+
 function ConvertTo-DaysAgo {
     param($Date)
     if (-not $Date) { return $null }
@@ -302,8 +328,12 @@ try {
 catch { }
 
 Invoke-Check -Id 'WU.SCAN.FAILED' -Area 'patching' -Title 'Windows Update scan' -Script {
-    $lastScanDays = $null
-    if ($script:WuResults) { $lastScanDays = ConvertTo-DaysAgo $script:WuResults.LastSearchSuccessDate }
+    # The update agent's own timestamp is not always refreshed on Windows 10/11, where the
+    # Update Orchestrator drives scans. The event log is used as a second source and the newer one wins.
+    $agentScan = $null
+    if ($script:WuResults) { $agentScan = $script:WuResults.LastSearchSuccessDate }
+    $eventScan = Get-LatestEventTime -LogName 'Microsoft-Windows-WindowsUpdateClient/Operational' -Id 26
+    $lastScanDays = ConvertTo-DaysAgo (Get-NewestDate @($agentScan, $eventScan))
 
     $searchError = $null
     $pendingCount = $null
@@ -320,7 +350,7 @@ Invoke-Check -Id 'WU.SCAN.FAILED' -Area 'patching' -Title 'Windows Update scan' 
             if ($_.Exception.HResult) { $searchError = ('0x{0:X8} {1}' -f $_.Exception.HResult, $searchError) }
         }
     }
-    $evidence = [ordered]@{ daysSinceLastSuccessfulScan = $lastScanDays; pendingUpdatesInCache = $pendingCount; searchError = $searchError }
+    $evidence = [ordered]@{ daysSinceLastSuccessfulScan = $lastScanDays; daysSinceAgentScan = (ConvertTo-DaysAgo $agentScan); daysSinceScanEvent = (ConvertTo-DaysAgo $eventScan); pendingUpdatesInCache = $pendingCount; searchError = $searchError }
 
     if ($searchError) {
         Add-Check -Id 'WU.SCAN.FAILED' -Area 'patching' -Status 'fail' -Title 'Windows Update agent does not respond' -Detail $searchError -Evidence $evidence
@@ -340,20 +370,23 @@ Invoke-Check -Id 'WU.SCAN.FAILED' -Area 'patching' -Title 'Windows Update scan' 
 }
 
 Invoke-Check -Id 'WU.PATCHLEVEL.BEHIND' -Area 'patching' -Title 'Quality update recency' -Script {
-    $days = $null
-    $source = $null
-    if ($script:WuResults) {
-        $days = ConvertTo-DaysAgo $script:WuResults.LastInstallationSuccessDate
-        if ($null -ne $days) { $source = 'Windows Update agent' }
-    }
-    if ($null -eq $days) {
+    # Three sources, newest wins: the update agent, the installed hotfix list and the install-success event.
+    $agentInstall = $null
+    if ($script:WuResults) { $agentInstall = $script:WuResults.LastInstallationSuccessDate }
+    $hotfixInstall = $null
+    try {
         $hotfix = Get-HotFix -ErrorAction Stop | Where-Object { $_.InstalledOn } | Sort-Object InstalledOn -Descending | Select-Object -First 1
-        if ($hotfix) {
-            $days = ConvertTo-DaysAgo $hotfix.InstalledOn
-            $source = 'Get-HotFix'
-        }
+        if ($hotfix) { $hotfixInstall = $hotfix.InstalledOn }
     }
-    $evidence = [ordered]@{ daysSinceLastInstall = $days; source = $source; build = $device.build; ubr = $device.ubr }
+    catch { }
+    $eventInstall = Get-LatestEventTime -LogName 'System' -ProviderName 'Microsoft-Windows-WindowsUpdateClient' -Id 19
+    $days = ConvertTo-DaysAgo (Get-NewestDate @($agentInstall, $hotfixInstall, $eventInstall))
+    $source = [ordered]@{
+        agent   = ConvertTo-DaysAgo $agentInstall
+        hotfix  = ConvertTo-DaysAgo $hotfixInstall
+        event19 = ConvertTo-DaysAgo $eventInstall
+    }
+    $evidence = [ordered]@{ daysSinceLastInstall = $days; daysBySource = $source; build = $device.build; ubr = $device.ubr }
     if ($null -eq $days) {
         Add-Check -Id 'WU.PATCHLEVEL.BEHIND' -Area 'patching' -Status 'unknown' -Title 'Last update installation unknown' -Evidence $evidence
     }
@@ -639,7 +672,7 @@ Invoke-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Title 'MDM enrollment' 
 
     $evidence = [ordered]@{
         enrollmentCount  = $enrollments.Count
-        enrollments      = $enrollments | ForEach-Object { [pscustomobject]@{ enrollmentState = $_.enrollmentState; enrollmentType = $_.enrollmentType } }
+        enrollments      = @($enrollments | ForEach-Object { [pscustomobject]@{ enrollmentState = $_.enrollmentState; enrollmentType = $_.enrollmentType } })
         mdmCertFound     = [bool]$cert
         mdmCertDaysLeft  = $certDaysLeft
     }
