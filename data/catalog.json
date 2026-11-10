@@ -12,26 +12,26 @@
       "area": "patching",
       "title": "Windows Update, BITS or CryptSvc service disabled",
       "severity": "high",
-      "status": "needs-fix",
+      "status": "available",
       "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
       "script": "remediation.ps1",
       "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
-      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
-      "risk": "medium",
-      "note": "The High-risk steps were fixed on 2026-11-10. The command still keeps the remaining invasive steps (agent reset, policy and registry cleanup) switched off."
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -removePolicyBlocks 0",
+      "risk": "low",
+      "note": "Restores the default start type of a disabled service (Manual for wuauserv and BITS, Automatic for CryptSvc). Nothing is forced to Automatic. Exits 1 if a policy keeps the service disabled."
     },
     {
       "id": "WU.SCAN.FAILED",
       "area": "patching",
       "title": "Windows Update scan fails or update agent not responding",
       "severity": "high",
-      "status": "needs-fix",
+      "status": "available",
       "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
       "script": "remediation.ps1",
       "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
-      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
-      "risk": "medium",
-      "note": "A safe component reset script is planned to replace this."
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -removePolicyBlocks 0",
+      "risk": "low",
+      "note": "Restarts the update agent, renames SoftwareDistribution and catroot2 only when they look broken (nothing is deleted) and triggers a scan. Installation stays with your update rings."
     },
     {
       "id": "WU.COMPONENTSTORE.CORRUPT",
@@ -51,13 +51,13 @@
       "area": "patching",
       "title": "WSUS or GPO update policy conflicts with Intune/Autopatch",
       "severity": "high",
-      "status": "needs-fix",
+      "status": "available",
       "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
       "script": "remediation.ps1",
       "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
-      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -removePolicyBlocks 1 -cleanupRegistry 0 -clearRebootFlags 0 -resetWUAgent 0",
-      "risk": "high",
-      "note": "Do not use on co-managed devices whose update workload is on ConfigMgr."
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -removePolicyBlocks 1",
+      "risk": "medium",
+      "note": "Removes WSUS and GPO update blocks. Skipped automatically on devices with a Configuration Manager client, where these values are set on purpose."
     },
     {
       "id": "WU.PATCHLEVEL.BEHIND",
@@ -172,13 +172,13 @@
       "area": "intune",
       "title": "Intune Management Extension missing or stopped",
       "severity": "high",
-      "status": "needs-fix",
+      "status": "available",
       "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
       "script": "remediation.ps1",
       "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
-      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -restartIntune 1 -resetWUComponents 0 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
-      "risk": "medium",
-      "note": "A dedicated IME repair script is planned."
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -restartIntune 1 -resetWUComponents 0 -removePolicyBlocks 0 -resetWUAgent 0",
+      "risk": "low",
+      "note": "Starts the Intune Management Extension when it is stopped. A missing IME is not reinstalled: assign a PowerShell script or Win32 app to the device so Intune deploys it again."
     },
     {
       "id": "AAD.PRT.MISSING",
