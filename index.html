@@ -5,16 +5,35 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Client Fix Page</title>
   <meta name="description" content="Analyse a Windows client health report and find the script that fixes it.">
+  <meta name="theme-color" content="#0b1120">
+  <script>try{if(localStorage.getItem('theme')==='light')document.documentElement.dataset.theme='light'}catch(e){}</script>
+  <link rel="icon" href="assets/img/favicon-32.png" type="image/png" sizes="32x32">
+  <link rel="icon" href="assets/img/favicon-48.png" type="image/png" sizes="48x48">
+  <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
   <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
   <header class="site-header">
-    <div class="wrap">
-      <p class="eyebrow">Windows client health</p>
-      <h1>Client Fix Page</h1>
-      <p class="lede">Run the diagnostic script on a client, load its report here, and see which script gets the device healthy again for patching, Intune, Entra ID and Defender.</p>
-    </div>
+    <a class="brand" href="https://letmetrythis.dev/" aria-label="LetMeTryThis.dev home">
+      <img src="assets/img/logo-256.webp" alt="LetMeTryThis.dev logo" width="48" height="48">
+      <span>LetMeTryThis.dev</span>
+    </a>
+    <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
+    <nav id="main-nav" class="main-nav" aria-label="Main navigation">
+      <a href="./" aria-current="page">Client Fix Page</a>
+      <a href="#find">Find a fix</a>
+      <a href="https://letmetrythis.dev/index-en.html#projects">Projects</a>
+      <a href="https://letmetrythis.dev/index-en.html#blog">Blog</a>
+      <a href="https://letmetrythis.dev/about-en.html">About</a>
+      <a class="button button-small" href="https://github.com/roalhelm/ClientFixPage" rel="noopener" target="_blank">GitHub</a>
+    </nav>
   </header>
+
+  <section class="hero wrap">
+    <p class="eyebrow">windows client health</p>
+    <h1>Client <span class="hl">Fix Page<span class="cursor" aria-hidden="true"></span></span></h1>
+    <p class="lede">Run the diagnostic script on a client, load its report here, and see which script gets the device healthy again for patching, Intune, Entra ID and Defender.</p>
+  </section>
 
   <main class="wrap">
     <section class="steps" aria-label="How it works">
@@ -60,12 +79,57 @@
         <div id="passed"></div>
       </details>
     </section>
+
+    <section id="find" class="finder" aria-labelledby="find-title">
+      <div class="finder-head">
+        <div>
+          <p class="eyebrow">no report? search the catalog</p>
+          <h2 id="find-title">Find a fix by problem</h2>
+          <p class="finder-lede">Describe the problem or pick an area to see the matching scripts and step-by-step guides.</p>
+        </div>
+        <span id="search-count" class="meta" aria-live="polite"></span>
+      </div>
+      <div class="search-box">
+        <label class="sr-only" for="search">Describe the problem</label>
+        <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="e.g. updates fail, Intune not syncing, Defender signatures old">
+      </div>
+      <div class="quick" aria-label="Common problems">
+        <span class="meta">Common:</span>
+        <button type="button" class="chip" data-query="update scan">Updates fail</button>
+        <button type="button" class="chip" data-query="reboot pending">Restart pending</button>
+        <button type="button" class="chip" data-query="disk space">Low disk space</button>
+        <button type="button" class="chip" data-query="sync">Intune not syncing</button>
+        <button type="button" class="chip" data-query="enrollment">Enrollment broken</button>
+        <button type="button" class="chip" data-query="prt">SSO / PRT missing</button>
+        <button type="button" class="chip" data-query="signature">Defender outdated</button>
+        <button type="button" class="chip" data-query="endpoints reachable">Endpoints blocked</button>
+      </div>
+      <div class="filters" id="search-areas" role="group" aria-label="Filter solutions by area"></div>
+      <div id="search-results" class="search-results"></div>
+    </section>
   </main>
 
-  <footer class="wrap site-footer">
+  <aside class="wrap disclaimer">
     <p>Fix scripts are recommendations. Read a script before you run it, and test on one device first. <span id="catalog-info"></span></p>
+  </aside>
+
+  <footer class="site-footer">
+    <a class="footer-brand" href="https://letmetrythis.dev/"><img src="assets/img/logo-256.webp" alt="" width="32" height="32" loading="lazy">© <span id="year"></span> LetMeTryThis.dev</a>
+    <span class="footer-tagline">Explore · Automate · Improve</span>
+    <span>
+      <a href="https://letmetrythis.dev/">Blog</a>
+      •
+      <a href="https://letmetrythis.dev/impressum-en.html">Legal notice</a>
+      •
+      <a href="https://letmetrythis.dev/datenschutz-en.html">Privacy</a>
+      •
+      <a href="https://github.com/roalhelm" rel="noopener" target="_blank">GitHub</a>
+      •
+      <a href="https://www.linkedin.com/in/ronny-alhelm-3aa28910b" rel="noopener" target="_blank">LinkedIn</a>
+    </span>
   </footer>
 
+  <script src="assets/site.js"></script>
   <script src="assets/app.js"></script>
 </body>
 </html>
