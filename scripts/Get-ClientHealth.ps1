@@ -57,7 +57,7 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$ScriptVersion = '0.1.1'
+$ScriptVersion = '0.1.2'
 $SchemaVersion = '1.0'
 
 #region Thresholds
@@ -840,15 +840,31 @@ Invoke-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Title 'Defender protection
     if (-not $script:Mp.RealTimeProtectionEnabled -and -not $passive) {
         Add-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Status 'fail' -Title 'Real-time protection is off' -Evidence $evidence
     }
-    elseif (-not $script:Mp.IsTamperProtected -and -not $passive) {
-        Add-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Status 'warn' -Title 'Tamper protection is off' -Evidence $evidence
-    }
     elseif ($passive) {
         Add-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Status 'info' -Title 'Defender is in passive mode' `
             -Detail 'Real-time protection is provided by another antivirus product.' -Evidence $evidence
     }
     else {
-        Add-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Status 'pass' -Title 'Real-time and tamper protection are on' -Evidence $evidence
+        Add-Check -Id 'DEF.RTP.DISABLED' -Area 'defender' -Status 'pass' -Title 'Real-time protection is on' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'DEF.TAMPER.OFF' -Area 'defender' -Title 'Defender tamper protection' -Script {
+    if (-not $script:Mp) {
+        Add-Check -Id 'DEF.TAMPER.OFF' -Area 'defender' -Status 'unknown' -Title 'Tamper protection state unknown' -Detail $script:MpError
+        return
+    }
+    $mode = [string]$script:Mp.AMRunningMode
+    $evidence = [ordered]@{ tamperProtection = $script:Mp.IsTamperProtected; runningMode = $mode }
+    if ($mode -and $mode -notin @('Normal', 'EDR Block Mode')) {
+        Add-Check -Id 'DEF.TAMPER.OFF' -Area 'defender' -Status 'info' -Title 'Tamper protection not checked: Defender is in passive mode' -Evidence $evidence
+    }
+    elseif (-not $script:Mp.IsTamperProtected) {
+        Add-Check -Id 'DEF.TAMPER.OFF' -Area 'defender' -Status 'warn' -Title 'Tamper protection is off' `
+            -Detail 'Tamper protection can only be turned on by an Intune or Defender portal policy, not by a script on the device.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'DEF.TAMPER.OFF' -Area 'defender' -Status 'pass' -Title 'Tamper protection is on' -Evidence $evidence
     }
 }
 

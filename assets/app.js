@@ -11,7 +11,8 @@
   var FIX_STATUS_LABEL = {
     'available': 'Script available',
     'needs-fix': 'Script needs review',
-    'planned': 'No script yet'
+    'planned': 'No script yet',
+    'manual': 'Step-by-step guide'
   };
 
   var catalog = null;
@@ -183,7 +184,7 @@
     var box = el('div', 'fix');
     var meta = el('div', 'fix-meta');
     meta.appendChild(el('h4', null, 'Recommended fix'));
-    meta.appendChild(el('span', 'badge ' + (fix.status === 'available' ? 'pass' : (fix.status === 'needs-fix' ? 'warn' : 'neutral')), FIX_STATUS_LABEL[fix.status] || fix.status));
+    meta.appendChild(el('span', 'badge ' + (fix.status === 'available' ? 'pass' : (fix.status === 'needs-fix' ? 'warn' : (fix.status === 'manual' ? 'info' : 'neutral'))), FIX_STATUS_LABEL[fix.status] || fix.status));
     if (fix.risk) { meta.appendChild(el('span', 'badge neutral', 'Risk: ' + fix.risk)); }
     box.appendChild(meta);
 

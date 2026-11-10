@@ -4,7 +4,8 @@
   "statusValues": [
     "available",
     "needs-fix",
-    "planned"
+    "planned",
+    "manual"
   ],
   "fixes": [
     {
@@ -64,11 +65,16 @@
       "area": "patching",
       "title": "Latest quality update missing",
       "severity": "medium",
-      "status": "planned",
+      "status": "manual",
       "risk": "low",
+      "note": "There is no single script for this: a missing monthly update is a symptom. Fix the other patching findings in this report first, then check the update policy.",
       "manualSteps": [
-        "Settings > Windows Update > Check for updates",
-        "Check Intune update ring and Autopatch group assignment"
+        "Fix the other patching findings in this report first (service disabled, scan failed, pending restart, low disk space, WSUS leftover): they are the usual cause",
+        "Intune: Devices > Windows > Update rings: is the device in a ring, are quality updates paused, how long is the deferral?",
+        "Autopatch: Tenant administration > Windows Autopatch > Devices: is the device registered, in a group and not 'Not ready'?",
+        "Intune > Reports > Windows updates (or Windows Update for Business reports): look up the device's error code",
+        "On the device: Settings > Windows Update > Check for updates, note the error code; Get-WindowsUpdateLog writes WindowsUpdate.log to the desktop",
+        "Last resort: install the current cumulative update by hand from the Microsoft Update Catalog"
       ]
     },
     {
@@ -76,11 +82,16 @@
       "area": "patching",
       "title": "Feature update blocked (safeguard hold or setup error)",
       "severity": "medium",
-      "status": "planned",
+      "status": "manual",
       "risk": "low",
+      "note": "A safeguard hold is set by Microsoft on purpose because of a known compatibility issue. Fix the cause (usually a driver or app) instead of forcing the update.",
       "manualSteps": [
-        "Check safeguard hold ID in the Windows Update for Business report",
-        "Review C:\\$WINDOWS.~BT\\Sources\\Panther\\setuperr.log"
+        "Note the GatedBlockId from the report evidence",
+        "Look it up in Windows release health (Known issues of the target version) or in the Intune feature update report, which names the safeguard hold",
+        "Update the affected driver or app (often audio, display, Bluetooth or a specific app) from the OEM or Windows Update",
+        "Run the appraiser again: schtasks /run /tn \"\\Microsoft\\Windows\\Application Experience\\Microsoft Compatibility Appraiser\", then check again after a few hours",
+        "Only for test devices: Settings catalog > Windows Update for Business > Disable WUfB Safeguards",
+        "If setup itself fails: run SetupDiag and check its result"
       ]
     },
     {
@@ -98,11 +109,18 @@
       "area": "patching",
       "title": "Less than 20 GB free on C:",
       "severity": "medium",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/DiskLowSpace/Remediate-DiskLowSpace.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/DiskLowSpace/Remediate-DiskLowSpace.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DiskLowSpace.ps1",
       "risk": "low",
+      "note": "Cleans only caches Windows recreates: Delivery Optimization, Windows Temp and error reports older than 7 days, old update downloads, then DISM StartComponentCleanup (no ResetBase). User data, profiles, the recycle bin and Windows.old are not touched.",
       "manualSteps": [
-        "Run Disk Cleanup including Windows Update Cleanup",
-        "dism.exe /Online /Cleanup-Image /StartComponentCleanup"
+        "If the script is not enough: Settings > System > Storage > Temporary files and Cleanup recommendations (shows the largest items per user)",
+        "Turn on OneDrive Files On-Demand and Storage Sense by Intune policy (Settings catalog > Storage / OneDrive)",
+        "Remove Windows.old only when no rollback is needed: Settings > System > Storage > Temporary files > Previous Windows installation(s)",
+        "Check for large user folders (Downloads, Videos, PST files) with the user before deleting anything"
       ]
     },
     {
@@ -123,11 +141,17 @@
       "area": "patching",
       "title": "Diagnostic data disabled (no Autopatch/WUfB report data)",
       "severity": "medium",
-      "status": "planned",
-      "risk": "low",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/DiagnosticDataBlocked/Remediate-DiagnosticData.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/DiagnosticDataBlocked/Remediate-DiagnosticData.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DiagnosticData.ps1",
+      "risk": "medium",
+      "note": "Removes a leftover Group Policy AllowTelemetry=0 (backed up first, skipped with a Configuration Manager client or -removePolicyBlocks 0) and sets DiagTrack back to Automatic. An Intune policy with AllowTelemetry=0 is only reported.",
       "manualSteps": [
-        "Set 'Allow Diagnostic Data' to Required in Intune",
-        "Ensure DiagTrack service is not disabled"
+        "Intune: Settings catalog > System > Allow Telemetry = Required (or higher) for Autopatch devices",
+        "Remove any GPO that sets 'Allow Diagnostic Data' to 'Diagnostic data off' for these devices",
+        "Check that no debloat or privacy tool disables the DiagTrack service again"
       ]
     },
     {
@@ -148,11 +172,17 @@
       "area": "intune",
       "title": "No successful Intune sync for 7 days",
       "severity": "high",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/PowershellScripts",
+      "script": "Remediations/IntuneSyncStale/Remediate-IntuneSync.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/PowershellScripts/main/Remediations/IntuneSyncStale/Remediate-IntuneSync.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-IntuneSync.ps1",
       "risk": "low",
+      "note": "Enables disabled Intune sync tasks, sets dmwappushservice back to Manual and starts the PushLaunch task to trigger a sync. Missing sync tasks mean a damaged enrollment: see MDM.ENROLLMENT.BROKEN.",
       "manualSteps": [
-        "Settings > Accounts > Access work or school > Info > Sync",
-        "Check EnterpriseMgmt scheduled tasks and dmwappushservice"
+        "Settings > Accounts > Access work or school > your account > Info > Sync",
+        "Intune admin center > Devices > the device > Sync, then check the last check-in time",
+        "If sync still fails: Event Viewer > Applications and Services Logs > Microsoft > Windows > DeviceManagement-Enterprise-Diagnostics-Provider > Admin"
       ]
     },
     {
@@ -160,11 +190,16 @@
       "area": "intune",
       "title": "MDM enrollment or device certificate broken",
       "severity": "high",
-      "status": "planned",
-      "risk": "low",
+      "status": "manual",
+      "risk": "medium",
+      "note": "Re-enrolling changes the device's management state, so it is a guided step, not an automatic script. Collect the MDM diagnostics first.",
       "manualSteps": [
-        "dsregcmd /status",
-        "Check event log DeviceManagement-Enterprise-Diagnostics-Provider/Admin"
+        "Collect diagnostics: mdmdiagnosticstool.exe -area \"DeviceEnrollment;DeviceProvisioning;Autopilot\" -cab C:\\Temp\\mdm.cab",
+        "Not enrolled (Entra joined): check Entra admin center > Mobility (MDM and WIP) > Microsoft Intune > MDM user scope and the user's Intune license, then Settings > Accounts > Access work or school > Enroll only in device management",
+        "Not enrolled (hybrid joined with auto-enrollment GPO): run as SYSTEM: %windir%\\system32\\deviceenroller.exe /c /AutoEnrollMDM",
+        "Certificate missing or expired: delete the device in Intune, then enroll it again as above",
+        "More than one enrollment: compare the enrollment IDs in the MDM diagnostics; remove the orphaned one only with the diagnostics in hand",
+        "Certificate expires soon: it renews on a working sync, so fix MDM.SYNC.STALE first"
       ]
     },
     {
@@ -185,11 +220,15 @@
       "area": "identity",
       "title": "Entra join or Primary Refresh Token missing",
       "severity": "high",
-      "status": "planned",
+      "status": "manual",
       "risk": "low",
+      "note": "Join and token problems depend on the identity setup, so they are guided steps. dsregcmd /status (as the user) shows the cause in its Diagnostic Data section.",
       "manualSteps": [
-        "dsregcmd /status",
-        "dsregcmd /refreshprt in the user context, then sign out and in"
+        "Run dsregcmd /status as the signed-in user and check AzureAdJoined, DeviceAuthStatus, AzureAdPrt and the 'Attempt Status' and 'Server Error Code' lines",
+        "Not joined (cloud): Settings > Accounts > Access work or school > Connect > Join this device to Microsoft Entra ID",
+        "Not joined (hybrid): check that Entra Connect syncs the computer object, then run the task \\Microsoft\\Windows\\Workplace Join\\Automatic-Device-Join or dsregcmd /join as SYSTEM",
+        "DeviceAuthStatus FAILED: the device object is disabled or deleted in Entra ID; enable it, or rejoin the device",
+        "No PRT: lock and unlock or sign out and in again, then dsregcmd /refreshprt as the user; check time sync, access to login.microsoftonline.com and TPM health (tpm.msc)"
       ]
     },
     {
@@ -197,9 +236,13 @@
       "area": "defender",
       "title": "Defender antivirus or sensor service not running",
       "severity": "high",
-      "status": "planned",
-      "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "Service/Remediate-DefenderService.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/Service/Remediate-DefenderService.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderService.ps1",
+      "risk": "medium",
+      "note": "Does nothing when another antivirus is active. Removes leftover DisableAntiSpyware/DisableAntiVirus Group Policy values (key backed up to C:\\ProgramData\\DefenderFix\\Backup, skipped with a Configuration Manager client or -removePolicyBlocks 0) and starts WinDefend. ForceDefenderPassiveMode is only reported.",
       "manualSteps": [
         "Get-MpComputerStatus",
         "Check for third-party antivirus and tamper protection"
@@ -210,9 +253,13 @@
       "area": "defender",
       "title": "Defender signatures older than 3 days",
       "severity": "high",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "Signatures/Remediate-DefenderSignatures.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/Signatures/Remediate-DefenderSignatures.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderSignatures.ps1",
       "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "note": "Runs MpCmdRun -SignatureUpdate from the configured source, then directly from Microsoft (-MMPC), then once more after clearing only the cached dynamic signatures. Update source settings are not changed.",
       "manualSteps": [
         "\"%ProgramFiles%\\Windows Defender\\MpCmdRun.exe\" -SignatureUpdate"
       ]
@@ -220,14 +267,32 @@
     {
       "id": "DEF.RTP.DISABLED",
       "area": "defender",
-      "title": "Real-time or tamper protection disabled",
+      "title": "Real-time protection disabled",
       "severity": "high",
-      "status": "planned",
-      "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "RealTimeProtection/Remediate-DefenderRealTimeProtection.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/RealTimeProtection/Remediate-DefenderRealTimeProtection.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-DefenderRealTimeProtection.ps1",
+      "risk": "medium",
+      "note": "Reports an Intune policy that switches protection off, removes leftover Real-Time Protection Group Policy values (backed up first, skipped with a Configuration Manager client or -removePolicyBlocks 0) and resets the local Defender preferences. Tamper protection can only be turned on from Intune.",
       "manualSteps": [
         "Get-MpComputerStatus",
         "Check Intune endpoint security antivirus policy"
+      ]
+    },
+    {
+      "id": "DEF.TAMPER.OFF",
+      "area": "defender",
+      "title": "Tamper protection off",
+      "severity": "medium",
+      "status": "manual",
+      "risk": "low",
+      "note": "No script can fix this: Windows only accepts tamper protection from Intune or the Defender portal, so that malware cannot switch it off either. Turn it on by policy.",
+      "manualSteps": [
+        "Intune: Endpoint security > Antivirus > Create policy > Windows > Windows Security Experience > TamperProtection (Device) = On, assign to the device group",
+        "Or tenant-wide: Microsoft Defender portal > Settings > Endpoints > Advanced features > Tamper protection = On (needs Defender for Endpoint)",
+        "Check that no Intune or Group Policy setting turns real-time protection off, then sync the device"
       ]
     },
     {
@@ -235,9 +300,13 @@
       "area": "defender",
       "title": "Defender for Endpoint not onboarded or not reporting",
       "severity": "medium",
-      "status": "planned",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/WindowsDefenderFix",
+      "script": "MDEOnboarding/Remediate-MDEOnboarding.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsDefenderFix/main/MDEOnboarding/Remediate-MDEOnboarding.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-MDEOnboarding.ps1",
       "risk": "low",
-      "note": "Reserved for the future Defender fix repo.",
+      "note": "Installs the Sense capability when it is missing, checks that the Intune EDR onboarding policy has arrived, re-enables DiagTrack and starts Sense. Assign it only to devices that should be onboarded to Defender for Endpoint.",
       "manualSteps": [
         "Check HKLM:\\SOFTWARE\\Microsoft\\Windows Advanced Threat Protection\\Status OnboardingState",
         "Run the MDE Client Analyzer"
