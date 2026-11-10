@@ -1044,11 +1044,38 @@ else {
     try { $script:Bl = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop }
     catch { $script:BlError = $_.Exception.Message }
 }
+# Event Viewer shows this channel as BitLocker-API > Management. Resolve the name on the device
+# so a different channel name on some builds does not silently hide the events.
 $BitLockerLog = 'Microsoft-Windows-BitLocker/BitLocker Management'
+try {
+    $found = @(Get-WinEvent -ListLog 'Microsoft-Windows-BitLocker*' -ErrorAction Stop | Where-Object { $_.LogName -like '*Management' })
+    if ($found.Count -gt 0) { $BitLockerLog = $found[0].LogName }
+}
+catch { }
+
+function Get-RecoveryKeyBackupTimes {
+    # Newest backup success (845) for one of the given recovery password protector IDs, and newest
+    # backup failure (846) for the OS drive. Events of other volumes or removed protectors are ignored.
+    param([string[]]$ProtectorIds)
+    $result = @{ ok = $null; fail = $null }
+    $events = @()
+    try { $events = @(Get-WinEvent -FilterHashtable @{ LogName = $BitLockerLog; Id = 845, 846 } -MaxEvents 200 -ErrorAction Stop) } catch { }
+    foreach ($entry in $events) {
+        $message = [string]$entry.Message
+        if ($entry.Id -eq 845 -and -not $result.ok) {
+            foreach ($id in $ProtectorIds) { if ($id -and $message -like ('*' + $id.Trim('{}') + '*')) { $result.ok = $entry.TimeCreated } }
+        }
+        elseif ($entry.Id -eq 846 -and -not $result.fail -and $message -like ('*' + $env:SystemDrive + '*')) {
+            $result.fail = $entry.TimeCreated
+        }
+    }
+    return $result
+}
 
 function Get-BitLockerProtectorTypes {
-    if (-not $script:Bl) { return @() }
-    return @($script:Bl.KeyProtector | ForEach-Object { [string]$_.KeyProtectorType })
+    # The comma keeps an empty or one-element array an array when it is returned.
+    if (-not $script:Bl) { return , @() }
+    return , @($script:Bl.KeyProtector | ForEach-Object { [string]$_.KeyProtectorType })
 }
 
 Invoke-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Title 'BitLocker on the OS drive' -Script {
@@ -1147,9 +1174,11 @@ Invoke-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Title 'BitLocke
             -Detail 'Key backup to Active Directory is not checked.'
         return
     }
-    $lastOk = Get-LatestEventTime -LogName $BitLockerLog -Id 845
-    $lastFail = Get-LatestEventTime -LogName $BitLockerLog -Id 846
-    $recoveryCount = @($protectors | Where-Object { $_ -eq 'RecoveryPassword' }).Count
+    $recoveryIds = @($script:Bl.KeyProtector | Where-Object { [string]$_.KeyProtectorType -eq 'RecoveryPassword' } | ForEach-Object { [string]$_.KeyProtectorId })
+    $backup = Get-RecoveryKeyBackupTimes -ProtectorIds $recoveryIds
+    $lastOk = $backup.ok
+    $lastFail = $backup.fail
+    $recoveryCount = $recoveryIds.Count
     $evidence = [ordered]@{
         recoveryPasswordProtectors = $recoveryCount
         lastBackupSuccess = $(if ($lastOk) { $lastOk.ToString('o') } else { $null })
@@ -1165,7 +1194,7 @@ Invoke-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Title 'BitLocke
     }
     elseif (-not $lastOk) {
         Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'warn' -Title 'Recovery key backup to Entra ID not confirmed' `
-            -Detail 'No success event 845 in the BitLocker Management log (the log may have rolled over). Check the key in the Intune admin center.' -Evidence $evidence
+            -Detail 'No success event 845 for the current recovery password in the BitLocker Management log (the log may have rolled over). Check the key in the Intune admin center.' -Evidence $evidence
     }
     else {
         Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'pass' -Title 'Recovery key is backed up to Entra ID' -Evidence $evidence
@@ -1177,24 +1206,35 @@ Invoke-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Title 'Windows Recovery 
         Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'unknown' -Title 'WinRE state not checked' -Detail 'Needs elevation.'
         return
     }
-    # ReAgent.xml is language independent, unlike the output of reagentc /info.
-    $path = Join-Path $env:SystemRoot 'System32\Recovery\ReAgent.xml'
-    if (-not (Test-Path -LiteralPath $path)) {
-        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'fail' -Title 'WinRE is not configured' -Detail 'ReAgent.xml is missing.'
-        return
-    }
-    [xml]$xml = Get-Content -LiteralPath $path -Raw
-    $state = $null
+    # reagentc /info shows the WinRE location as \\?\GLOBALROOT\device\... only while WinRE is enabled.
+    # That path is language independent; the labels around it are localized.
+    $reagentOk = $false
     $location = $null
-    try { $state = [string]$xml.WindowsRE.InstallState.state } catch { }
-    try { $location = [string]$xml.WindowsRE.WinreLocation.path } catch { }
-    $evidence = [ordered]@{ installState = $state; winreLocation = $location }
-    if ($state -eq '1') {
+    $output = & (Join-Path $env:SystemRoot 'System32\reagentc.exe') /info 2>&1 | Out-String
+    if ($LASTEXITCODE -eq 0) {
+        $reagentOk = $true
+        if ($output -match '(\\\\\?\\GLOBALROOT\\device\\\S+)') { $location = $Matches[1] }
+    }
+    $state = $null
+    if (-not $reagentOk) {
+        # Fallback only: ReAgent.xml InstallState is 1 while enabled.
+        try {
+            [xml]$xml = Get-Content -LiteralPath (Join-Path $env:SystemRoot 'System32\Recovery\ReAgent.xml') -Raw -ErrorAction Stop
+            $state = [string]$xml.WindowsRE.InstallState.state
+        }
+        catch { }
+    }
+    $evidence = [ordered]@{ source = $(if ($reagentOk) { 'reagentc /info' } else { 'ReAgent.xml' }); winreLocation = $location; installState = $state }
+    if ($location -or $state -eq '1') {
         Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'pass' -Title 'WinRE is enabled' -Evidence $evidence
     }
-    else {
+    elseif ($reagentOk) {
         Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'fail' -Title 'WinRE is disabled' `
             -Detail 'Silent BitLocker encryption, Autopilot reset and remote wipe need the Windows Recovery Environment.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'unknown' -Title 'WinRE state could not be read' `
+            -Detail 'reagentc /info failed. Run it by hand to see the state.' -Evidence $evidence
     }
 }
 

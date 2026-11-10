@@ -419,7 +419,7 @@
         "Check that a disk encryption policy is assigned: Intune admin center > Endpoint security > Disk encryption, and the device status there",
         "Silent encryption needs: a ready TPM (BL.TPM.NOTREADY), enabled WinRE (BL.WINRE.DISABLED), UEFI with Secure Boot, and no third-party encryption",
         "Standard users: the policy must allow standard users to enable encryption during Entra join",
-        "\"Waiting for activation\" (encrypted, no protector): fixes itself once the policy applies; or run manage-bde -protectors -add C: -tpm, then BackupToAAD-BitLockerKeyProtector",
+        "\"Waiting for activation\" (encrypted, no protector): fixes itself once the policy applies. By hand, keep this order: manage-bde -protectors -add C: -recoverypassword, back it up with BackupToAAD-BitLockerKeyProtector and confirm the key in Intune, only then manage-bde -protectors -add C: -tpm",
         "After the fix: check the recovery key in Intune admin center > Devices > the device > Recovery keys"
       ]
     },
