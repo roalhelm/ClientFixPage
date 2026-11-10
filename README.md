@@ -42,7 +42,7 @@ Edit `data/catalog.json`. Each entry needs an `id` that matches a check ID from 
 | Field | Meaning |
 | --- | --- |
 | `id`, `area`, `title`, `severity` | Finding ID, area, display title, `high` / `medium` / `low` |
-| `status` | `available` (safe to recommend), `needs-fix` (script exists but has known issues), `planned` (no script yet) |
+| `status` | `available` (safe to recommend), `needs-fix` (script exists but has known issues), `manual` (no script on purpose; `manualSteps` is the guide), `planned` (no script yet) |
 | `repo`, `script`, `download` | Repository URL, script path and direct download URL (https only) |
 | `command` | Command line shown with a copy button |
 | `risk`, `note` | Risk level and a warning shown above the fix |
