@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Read-only health check for a Windows client (Windows Update, Intune/MDM, Entra ID, Defender, network).
+    Read-only health check for a Windows client (Windows Update, Intune/MDM, Entra ID, BitLocker,
+    drivers, Company Portal, Defender, network).
 
 .DESCRIPTION
     Collects the state of a Windows 10/11 client and writes a JSON report.
@@ -15,7 +16,17 @@
     be checked in the context of the signed-in user, not as SYSTEM.
 
 .PARAMETER OutputPath
-    Path of the JSON report. Default: ClientHealth-<COMPUTERNAME>.json in the TEMP folder.
+    Path of the JSON report. Default: ClientHealth-<COMPUTERNAME>.json in the TEMP folder,
+    or in the Intune Management Extension log folder in Intune mode.
+
+.PARAMETER IntuneMode
+    Runs the script as an Intune Remediation detection script. It is switched on
+    automatically when the script runs as SYSTEM, because Intune passes no parameters.
+    In Intune mode the script
+      - writes the report to C:\ProgramData\Microsoft\IntuneManagementExtension\Logs\ClientHealth-<COMPUTERNAME>.json
+        (that folder is part of "Collect diagnostics" in the Intune admin center),
+      - prints a single summary line (shown in the Intune remediation report),
+      - exits 1 when the device has a failed check ("With issues" in Intune), otherwise 0.
 
 .PARAMETER Anonymize
     Replaces the computer name with a short hash and leaves out the user name and the
@@ -39,8 +50,13 @@
 .EXAMPLE
     powershell.exe -ExecutionPolicy Bypass -File .\Get-ClientHealth.ps1 -CopyToClipboard
 
+.EXAMPLE
+    Intune > Devices > Scripts and remediations > Remediations: upload this file as the detection
+    script only, run as SYSTEM in 64-bit PowerShell. Read the summary in the device status column
+    and collect the JSON with "Collect diagnostics", or from the IME Logs folder.
+
 .NOTES
-    Version : 0.1.1
+    Version : 0.2.0
     Requires: Windows PowerShell 5.1 or PowerShell 7
 #>
 [CmdletBinding()]
@@ -51,13 +67,14 @@ param(
     [switch]$SkipUpdateScan,
     [switch]$SkipComponentStore,
     [switch]$CopyToClipboard,
-    [switch]$PassThru
+    [switch]$PassThru,
+    [switch]$IntuneMode
 )
 
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$ScriptVersion = '0.1.2'
+$ScriptVersion = '0.2.0'
 $SchemaVersion = '1.0'
 
 #region Thresholds
@@ -67,6 +84,7 @@ $MaxDaysSinceWuInstall  = 40   # WU.PATCHLEVEL.BEHIND
 $MaxDaysSinceMdmSync    = 7    # MDM.SYNC.STALE
 $MaxSignatureAgeDays    = 3    # DEF.SIGNATURE.OUTDATED
 $MdmCertWarnDays        = 30   # MDM.ENROLLMENT.BROKEN (certificate expiry warning)
+$MaxClockSkewSeconds    = 300  # SYS.TIME.SKEW (Kerberos tolerance is 5 minutes)
 $NetworkTimeoutMs       = 4000
 $Endpoints = @(
     @{ Host = 'login.microsoftonline.com';           Purpose = 'Entra ID sign-in' },
@@ -245,6 +263,7 @@ function ConvertTo-DaysAgo {
 
 $isElevated = Test-IsElevated
 $isSystem   = Test-IsSystem
+if ($isSystem) { $IntuneMode = $true }
 
 #region Device information
 $device = [ordered]@{
@@ -641,7 +660,231 @@ Invoke-Check -Id 'AAD.PRT.MISSING' -Area 'identity' -Title 'Entra ID join and Pr
 }
 #endregion
 
+#region Identity: hybrid join
+Invoke-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Title 'Hybrid Entra join' -Script {
+    if ($script:Dsreg.Count -eq 0) {
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'unknown' -Title 'Hybrid join state unknown' -Detail 'dsregcmd /status returned no data.'
+        return
+    }
+    if ($script:Dsreg['DomainJoined'] -ne 'YES') {
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'info' -Title 'Not domain joined: hybrid join does not apply'
+        return
+    }
+    if ($script:Dsreg['AzureAdJoined'] -eq 'YES') {
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'pass' -Title 'Device is hybrid Entra joined'
+        return
+    }
+
+    # Is hybrid join configured? Client-side SCP in the registry, else the SCP object in Active Directory.
+    $scpTenant = Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\CDJ\AAD' -Name 'TenantId'
+    $scpSource = $null
+    $scpError  = $null
+    if ($scpTenant) {
+        $scpSource = 'registry (client-side SCP)'
+    }
+    else {
+        try {
+            $rootDse = [ADSI]'LDAP://RootDSE'
+            $configNc = [string]$rootDse.Properties['configurationNamingContext'].Value
+            $scp = [ADSI]("LDAP://CN=62a0ff2e-97b9-4513-943f-0d221bd30080,CN=Device Registration Configuration,CN=Services," + $configNc)
+            foreach ($keyword in @($scp.Properties['keywords'])) {
+                if ([string]$keyword -like 'azureADId:*') { $scpTenant = ([string]$keyword).Substring(10); $scpSource = 'Active Directory' }
+            }
+        }
+        catch {
+            $scpError = $_.Exception.Message
+        }
+    }
+
+    $task = $null
+    $taskInfo = $null
+    try {
+        $task = Get-ScheduledTask -TaskPath '\Microsoft\Windows\Workplace Join\' -TaskName 'Automatic-Device-Join' -ErrorAction Stop
+        $taskInfo = $task | Get-ScheduledTaskInfo -ErrorAction SilentlyContinue
+    }
+    catch { }
+    $taskResult = $null
+    if ($taskInfo) { $taskResult = ('0x{0:X8}' -f [uint32]$taskInfo.LastTaskResult) }
+
+    $evidence = [ordered]@{
+        scpFound           = [bool]$scpTenant
+        scpSource          = $scpSource
+        scpLookupError     = $scpError
+        joinTaskState      = $(if ($task) { [string]$task.State } else { 'missing' })
+        joinTaskLastResult = $taskResult
+        joinTaskLastRun    = $(if ($taskInfo -and $taskInfo.LastRunTime -and $taskInfo.LastRunTime.Year -gt 2000) { $taskInfo.LastRunTime.ToString('o') } else { $null })
+        errorPhase         = $script:Dsreg['Error Phase']
+        clientErrorCode    = $script:Dsreg['Client ErrorCode']
+        serverErrorCode    = $script:Dsreg['Server ErrorCode']
+        serverMessage      = $script:Dsreg['Server Message']
+    }
+
+    if (-not $scpTenant -and -not $scpError) {
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'info' -Title 'Domain joined without hybrid join configuration' `
+            -Detail 'No service connection point (SCP) for Entra hybrid join found. Ignore this if the device is not meant to be hybrid joined.' -Evidence $evidence
+    }
+    elseif (-not $scpTenant) {
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'warn' -Title 'Domain joined but not hybrid joined' `
+            -Detail ('The SCP could not be read from Active Directory: ' + $scpError) -Evidence $evidence
+    }
+    else {
+        $reason = @()
+        if (-not $task) { $reason += 'the Automatic-Device-Join task is missing' }
+        elseif ([string]$task.State -eq 'Disabled') { $reason += 'the Automatic-Device-Join task is disabled' }
+        if ($evidence.clientErrorCode -or $evidence.serverErrorCode) { $reason += ('last attempt: client error {0}, server error {1}' -f $evidence.clientErrorCode, $evidence.serverErrorCode) }
+        elseif ($taskResult -and $taskResult -ne '0x00000000') { $reason += ('join task result ' + $taskResult) }
+        if ($reason.Count -eq 0) { $reason += 'the computer object may not be synced to Entra ID yet' }
+        Add-Check -Id 'AAD.HYBRIDJOIN.PENDING' -Area 'identity' -Status 'fail' -Title 'Hybrid Entra join has not completed' `
+            -Detail (($reason -join '; ') + '.') -Evidence $evidence
+    }
+}
+#endregion
+
+#region Identity: Entra joined and registered (dual state)
+Invoke-Check -Id 'AAD.DUALSTATE' -Area 'identity' -Title 'Entra joined and registered' -Script {
+    if ($script:Dsreg.Count -eq 0 -or $script:Dsreg['AzureAdJoined'] -ne 'YES') {
+        Add-Check -Id 'AAD.DUALSTATE' -Area 'identity' -Status 'info' -Title 'Dual state not checked: device is not Entra joined'
+        return
+    }
+    if ($isSystem -or -not $script:Dsreg.ContainsKey('WorkplaceJoined')) {
+        Add-Check -Id 'AAD.DUALSTATE' -Area 'identity' -Status 'info' -Title 'Dual state not checked' `
+            -Detail 'Entra registration is per user and can only be checked in the context of the signed-in user.'
+        return
+    }
+    $evidence = [ordered]@{ azureAdJoined = $script:Dsreg['AzureAdJoined']; domainJoined = $script:Dsreg['DomainJoined']; workplaceJoined = $script:Dsreg['WorkplaceJoined'] }
+    if ($script:Dsreg['WorkplaceJoined'] -eq 'YES') {
+        Add-Check -Id 'AAD.DUALSTATE' -Area 'identity' -Status 'warn' -Title 'Device is Entra joined and also Entra registered' `
+            -Detail 'A work account was added as "Entra registered" on top of the join. This can break Conditional Access, SSO and Intune enrollment.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'AAD.DUALSTATE' -Area 'identity' -Status 'pass' -Title 'No additional Entra registration' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Identity: clock
+function Get-ServerTimeUtc {
+    # Reads the Date header of an HTTPS response. Returns $null when there is no answer.
+    param([string]$Url, [int]$TimeoutMs = 8000)
+    $response = $null
+    try {
+        $request = [System.Net.HttpWebRequest]::Create($Url)
+        $request.Method = 'HEAD'
+        $request.Timeout = $TimeoutMs
+        $request.AllowAutoRedirect = $false
+        try { $response = $request.GetResponse() }
+        catch [System.Net.WebException] { $response = $_.Exception.Response }
+        if (-not $response) { return $null }
+        $header = $response.Headers['Date']
+        if (-not $header) { return $null }
+        $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor [System.Globalization.DateTimeStyles]::AssumeUniversal
+        return [datetime]::Parse($header, [System.Globalization.CultureInfo]::InvariantCulture, $styles)
+    }
+    catch {
+        return $null
+    }
+    finally {
+        if ($response) { $response.Close() }
+    }
+}
+
+Invoke-Check -Id 'SYS.TIME.SKEW' -Area 'identity' -Title 'System clock' -Script {
+    $w32 = Get-ServiceState -Name 'W32Time'
+    $skew = $null
+    if (-not $SkipNetwork) {
+        $serverUtc = Get-ServerTimeUtc -Url 'https://login.microsoftonline.com/'
+        if ($serverUtc) { $skew = [math]::Round(([datetime]::UtcNow - $serverUtc).TotalSeconds, 0) }
+    }
+    $evidence = [ordered]@{ skewSeconds = $skew; w32time = $w32; reference = 'Date header of login.microsoftonline.com' }
+    if ($null -ne $skew -and [math]::Abs($skew) -gt $MaxClockSkewSeconds) {
+        Add-Check -Id 'SYS.TIME.SKEW' -Area 'identity' -Status 'fail' -Title 'System clock is wrong' `
+            -Detail ("The clock is {0} seconds off. Kerberos, Entra sign-in and certificates fail above 5 minutes." -f $skew) -Evidence $evidence
+    }
+    elseif (-not $w32 -or $w32.StartType -eq 'Disabled') {
+        Add-Check -Id 'SYS.TIME.SKEW' -Area 'identity' -Status 'warn' -Title 'Windows Time service is disabled or missing' `
+            -Detail 'The clock is not kept in sync and will drift.' -Evidence $evidence
+    }
+    elseif ($null -eq $skew) {
+        Add-Check -Id 'SYS.TIME.SKEW' -Area 'identity' -Status 'unknown' -Title 'Clock offset not measured' `
+            -Detail 'No answer from login.microsoftonline.com (or -SkipNetwork was used).' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'SYS.TIME.SKEW' -Area 'identity' -Status 'pass' -Title 'System clock is in sync' `
+            -Detail ("Offset {0} seconds." -f $skew) -Evidence $evidence
+    }
+}
+#endregion
+
 #region Intune: enrollment
+# Common auto-enrollment error codes (event 76 in the DeviceManagement-Enterprise-Diagnostics-Provider/Admin log).
+$EnrollmentErrorHints = @{
+    '0x80180018' = 'The user has no Intune license, or it is not active yet.'
+    '0x8018002B' = 'The UPN uses an unverified or non-routable domain, or the user is outside the MDM user scope.'
+    '0x80180014' = 'Blocked by an enrollment restriction (platform or personal devices).'
+    '0x8018000A' = 'The device is already enrolled (another user or leftover enrollment entries).'
+    '0x80192EE7' = 'Name resolution failed: check DNS and proxy (see NET.ENDPOINT.UNREACHABLE).'
+    '0x80072EE7' = 'Name resolution failed: check DNS and proxy (see NET.ENDPOINT.UNREACHABLE).'
+    '0x80192EE2' = 'Connection timed out: check proxy and firewall (see NET.ENDPOINT.UNREACHABLE).'
+    '0x80072EE2' = 'Connection timed out: check proxy and firewall (see NET.ENDPOINT.UNREACHABLE).'
+}
+
+function Add-EnrollmentMissingCheck {
+    # Called when no Intune enrollment exists: works out why auto-enrollment did not happen.
+    $mdmUrl = $null
+    if ($script:Dsreg.Count -gt 0) { $mdmUrl = $script:Dsreg['MdmUrl'] }
+    $autoEnrollGpo = Get-RegValue -Path 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\CurrentVersion\MDM' -Name 'AutoEnrollMDM'
+    $autoEnrollTask = $null
+    try {
+        $autoEnrollTask = Get-ScheduledTask -TaskPath '\Microsoft\Windows\EnterpriseMgmt\' -ErrorAction Stop |
+            Where-Object { $_.TaskName -like '*automatically enrolling in MDM*' } | Select-Object -First 1
+    }
+    catch { }
+
+    $lastError = $null
+    $lastErrorTime = $null
+    try {
+        $entry = Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-DeviceManagement-Enterprise-Diagnostics-Provider/Admin'; Id = 76; StartTime = (Get-Date).AddDays(-30) } -MaxEvents 1 -ErrorAction Stop
+        if ($entry) {
+            $lastErrorTime = $entry.TimeCreated.ToString('o')
+            if ($entry.Message -match '0x[0-9A-Fa-f]{8}') { $lastError = '0x' + $Matches[0].Substring(2).ToUpper() }
+        }
+    }
+    catch { }
+    $hint = $null
+    if ($lastError -and $EnrollmentErrorHints.ContainsKey($lastError)) { $hint = $EnrollmentErrorHints[$lastError] }
+
+    $entraJoined = ($script:Dsreg.Count -gt 0 -and $script:Dsreg['AzureAdJoined'] -eq 'YES')
+    $domainJoined = ($script:Dsreg.Count -gt 0 -and $script:Dsreg['DomainJoined'] -eq 'YES')
+    $evidence = [ordered]@{
+        entraJoined         = $entraJoined
+        domainJoined        = $domainJoined
+        mdmUrl              = $mdmUrl
+        autoEnrollGpo       = $autoEnrollGpo
+        autoEnrollTaskFound = [bool]$autoEnrollTask
+        lastEnrollError     = $lastError
+        lastEnrollErrorTime = $lastErrorTime
+        hint                = $hint
+    }
+
+    if (-not $entraJoined) {
+        $cause = 'The device is not Entra joined, so automatic enrollment cannot start. Fix the join first (AAD.PRT.MISSING or AAD.HYBRIDJOIN.PENDING).'
+    }
+    elseif (-not $mdmUrl) {
+        $cause = 'The Entra join has no MDM URL: the user is outside the MDM user scope, or automatic Intune enrollment is not configured in Entra ID.'
+    }
+    elseif ($domainJoined -and $autoEnrollGpo -ne 1) {
+        $cause = 'Hybrid joined, but the GPO "Enable automatic MDM enrollment using default Azure AD credentials" is not applied.'
+    }
+    elseif ($lastError) {
+        $cause = 'Last automatic enrollment attempt failed with ' + $lastError + '.'
+        if ($hint) { $cause += ' ' + $hint }
+    }
+    else {
+        $cause = 'No failed enrollment attempt logged in the last 30 days. Automatic enrollment may not have been triggered yet.'
+    }
+    Add-Check -Id 'MDM.ENROLLMENT.MISSING' -Area 'intune' -Status 'fail' -Title 'Device is not enrolled in Intune' -Detail $cause -Evidence $evidence
+}
+
 $script:MdmEnrollmentIds = @()
 Invoke-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Title 'MDM enrollment' -Script {
     $enrollments = @()
@@ -678,8 +921,8 @@ Invoke-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Title 'MDM enrollment' 
     }
 
     if ($enrollments.Count -eq 0) {
-        Add-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Status 'fail' -Title 'Device is not enrolled in Intune' `
-            -Detail 'No enrollment with provider "MS DM Server" found.' -Evidence $evidence
+        Add-EnrollmentMissingCheck
+        Add-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Status 'info' -Title 'Enrollment health not checked: device is not enrolled (see MDM.ENROLLMENT.MISSING)'
     }
     elseif (-not $cert) {
         Add-Check -Id 'MDM.ENROLLMENT.BROKEN' -Area 'intune' -Status 'fail' -Title 'Intune MDM device certificate is missing' -Evidence $evidence
@@ -763,6 +1006,284 @@ Invoke-Check -Id 'MDM.IME.NOTRUNNING' -Area 'intune' -Title 'Intune Management E
     }
     else {
         Add-Check -Id 'MDM.IME.NOTRUNNING' -Area 'intune' -Status 'pass' -Title 'Intune Management Extension is running' -Evidence $ime
+    }
+}
+#endregion
+
+#region Intune: Company Portal
+Invoke-Check -Id 'CP.APP.MISSING' -Area 'intune' -Title 'Company Portal app' -Script {
+    $packages = $null
+    if ($isElevated) { $packages = @(Get-AppxPackage -AllUsers -Name 'Microsoft.CompanyPortal' -ErrorAction Stop) }
+    else { $packages = @(Get-AppxPackage -Name 'Microsoft.CompanyPortal' -ErrorAction Stop) }
+    $pkg = $packages | Sort-Object Version -Descending | Select-Object -First 1
+    if (-not $pkg) {
+        Add-Check -Id 'CP.APP.MISSING' -Area 'intune' -Status 'warn' -Title 'Company Portal is not installed' `
+            -Detail 'Users cannot install available apps or check compliance without it.'
+        Add-Check -Id 'CP.APP.BROKEN' -Area 'intune' -Status 'info' -Title 'Company Portal state not checked: app not installed'
+        return
+    }
+    $evidence = [ordered]@{ version = [string]$pkg.Version; status = [string]$pkg.Status; allUsers = $isElevated }
+    Add-Check -Id 'CP.APP.MISSING' -Area 'intune' -Status 'pass' -Title 'Company Portal is installed' -Detail ('Version ' + $pkg.Version) -Evidence $evidence
+    if ([string]$pkg.Status -ne 'Ok') {
+        Add-Check -Id 'CP.APP.BROKEN' -Area 'intune' -Status 'fail' -Title 'Company Portal app package is damaged' `
+            -Detail ('Package status: ' + $pkg.Status) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'CP.APP.BROKEN' -Area 'intune' -Status 'pass' -Title 'Company Portal app package is OK' -Evidence $evidence
+    }
+}
+#endregion
+
+#region BitLocker and TPM
+$script:Bl = $null
+$script:BlError = $null
+if (-not $isElevated) {
+    $script:BlError = 'Needs elevation.'
+}
+else {
+    try { $script:Bl = Get-BitLockerVolume -MountPoint $env:SystemDrive -ErrorAction Stop }
+    catch { $script:BlError = $_.Exception.Message }
+}
+$BitLockerLog = 'Microsoft-Windows-BitLocker/BitLocker Management'
+
+function Get-BitLockerProtectorTypes {
+    if (-not $script:Bl) { return @() }
+    return @($script:Bl.KeyProtector | ForEach-Object { [string]$_.KeyProtectorType })
+}
+
+Invoke-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Title 'BitLocker on the OS drive' -Script {
+    if (-not $script:Bl) {
+        Add-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Status 'unknown' -Title 'BitLocker state unknown' -Detail $script:BlError
+        return
+    }
+    $policy = (Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\BitLocker' -Name 'RequireDeviceEncryption') -eq 1 -or
+              (Test-Path -LiteralPath 'HKLM:\SOFTWARE\Policies\Microsoft\FVE')
+    $lastError = $null
+    try {
+        $entry = Get-WinEvent -FilterHashtable @{ LogName = $BitLockerLog; Level = 2; StartTime = (Get-Date).AddDays(-14) } -MaxEvents 1 -ErrorAction Stop
+        if ($entry) {
+            $message = [string]$entry.Message
+            if ($message.Length -gt 300) { $message = $message.Substring(0, 300) + '...' }
+            $lastError = [ordered]@{ id = $entry.Id; time = $entry.TimeCreated.ToString('o'); message = $message }
+        }
+    }
+    catch { }
+    $status = [string]$script:Bl.VolumeStatus
+    $protectors = Get-BitLockerProtectorTypes
+    $evidence = [ordered]@{
+        mountPoint           = $env:SystemDrive
+        volumeStatus         = $status
+        protectionStatus     = [string]$script:Bl.ProtectionStatus
+        encryptionPercentage = $script:Bl.EncryptionPercentage
+        encryptionMethod     = [string]$script:Bl.EncryptionMethod
+        keyProtectors        = $protectors
+        policyAssigned       = $policy
+        lastBitLockerError   = $lastError
+    }
+    $errorText = ''
+    if ($lastError) { $errorText = (' Last BitLocker error (event {0}): {1}' -f $lastError.id, $lastError.message) }
+    if ($status -eq 'EncryptionInProgress') {
+        Add-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Status 'info' -Title 'OS drive encryption in progress' `
+            -Detail ('{0}% encrypted.' -f $script:Bl.EncryptionPercentage) -Evidence $evidence
+    }
+    elseif ($status -ne 'FullyEncrypted') {
+        $detail = 'Volume status: ' + $status + '.'
+        if (-not $policy) { $detail += ' No BitLocker policy found on the device.' }
+        Add-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Status 'fail' -Title 'OS drive is not encrypted' -Detail ($detail + $errorText) -Evidence $evidence
+    }
+    elseif ($protectors.Count -eq 0) {
+        Add-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Status 'fail' -Title 'OS drive is encrypted but not protected' `
+            -Detail ('BitLocker waits for activation: no key protector exists, so the key is stored in the clear.' + $errorText) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.OSVOLUME.NOTENCRYPTED' -Area 'bitlocker' -Status 'pass' -Title 'OS drive is encrypted' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Title 'BitLocker protection' -Script {
+    if (-not $script:Bl) {
+        Add-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Status 'unknown' -Title 'BitLocker protection state unknown' -Detail $script:BlError
+        return
+    }
+    $protectors = Get-BitLockerProtectorTypes
+    if ([string]$script:Bl.VolumeStatus -ne 'FullyEncrypted' -or $protectors.Count -eq 0) {
+        Add-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Status 'info' -Title 'Not checked: OS drive is not protected yet (see BL.OSVOLUME.NOTENCRYPTED)'
+        return
+    }
+    if ([string]$script:Bl.ProtectionStatus -eq 'On') {
+        Add-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Status 'pass' -Title 'BitLocker protection is on'
+        return
+    }
+    $suspendCount = $null
+    try {
+        $volume = Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftVolumeEncryption' -ClassName 'Win32_EncryptableVolume' `
+            -Filter ("DriveLetter='{0}'" -f $env:SystemDrive) -ErrorAction Stop
+        $suspendCount = (Invoke-CimMethod -InputObject $volume -MethodName 'GetSuspendCount' -ErrorAction Stop).SuspendCount
+    }
+    catch { }
+    $evidence = [ordered]@{ protectionStatus = [string]$script:Bl.ProtectionStatus; suspendCount = $suspendCount; keyProtectors = $protectors }
+    if ($suspendCount -gt 0) {
+        Add-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Status 'warn' -Title 'BitLocker protection is paused' `
+            -Detail ("It resumes by itself after {0} more restart(s), typically after a firmware or BIOS update." -f $suspendCount) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.PROTECTION.SUSPENDED' -Area 'bitlocker' -Status 'fail' -Title 'BitLocker protection is suspended' `
+            -Detail 'The drive is encrypted, but the key is stored in the clear until protection is resumed.' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Title 'BitLocker recovery key backup' -Script {
+    if (-not $script:Bl) {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'unknown' -Title 'Recovery key state unknown' -Detail $script:BlError
+        return
+    }
+    $protectors = Get-BitLockerProtectorTypes
+    if ([string]$script:Bl.VolumeStatus -eq 'FullyDecrypted') {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'info' -Title 'Not checked: OS drive is not encrypted'
+        return
+    }
+    if ($device.entraJoined -ne $true) {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'info' -Title 'Not checked: device is not Entra joined' `
+            -Detail 'Key backup to Active Directory is not checked.'
+        return
+    }
+    $lastOk = Get-LatestEventTime -LogName $BitLockerLog -Id 845
+    $lastFail = Get-LatestEventTime -LogName $BitLockerLog -Id 846
+    $recoveryCount = @($protectors | Where-Object { $_ -eq 'RecoveryPassword' }).Count
+    $evidence = [ordered]@{
+        recoveryPasswordProtectors = $recoveryCount
+        lastBackupSuccess = $(if ($lastOk) { $lastOk.ToString('o') } else { $null })
+        lastBackupFailure = $(if ($lastFail) { $lastFail.ToString('o') } else { $null })
+    }
+    if ($recoveryCount -eq 0) {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'fail' -Title 'No BitLocker recovery password exists' `
+            -Detail 'Without a recovery password there is no key to back up, and a locked device cannot be recovered.' -Evidence $evidence
+    }
+    elseif ($lastFail -and (-not $lastOk -or $lastFail -gt $lastOk)) {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'fail' -Title 'Recovery key backup to Entra ID failed' `
+            -Detail 'The newest backup event is a failure (event 846).' -Evidence $evidence
+    }
+    elseif (-not $lastOk) {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'warn' -Title 'Recovery key backup to Entra ID not confirmed' `
+            -Detail 'No success event 845 in the BitLocker Management log (the log may have rolled over). Check the key in the Intune admin center.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.RECOVERYKEY.NOTESCROWED' -Area 'bitlocker' -Status 'pass' -Title 'Recovery key is backed up to Entra ID' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Title 'Windows Recovery Environment' -Script {
+    if (-not $isElevated) {
+        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'unknown' -Title 'WinRE state not checked' -Detail 'Needs elevation.'
+        return
+    }
+    # ReAgent.xml is language independent, unlike the output of reagentc /info.
+    $path = Join-Path $env:SystemRoot 'System32\Recovery\ReAgent.xml'
+    if (-not (Test-Path -LiteralPath $path)) {
+        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'fail' -Title 'WinRE is not configured' -Detail 'ReAgent.xml is missing.'
+        return
+    }
+    [xml]$xml = Get-Content -LiteralPath $path -Raw
+    $state = $null
+    $location = $null
+    try { $state = [string]$xml.WindowsRE.InstallState.state } catch { }
+    try { $location = [string]$xml.WindowsRE.WinreLocation.path } catch { }
+    $evidence = [ordered]@{ installState = $state; winreLocation = $location }
+    if ($state -eq '1') {
+        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'pass' -Title 'WinRE is enabled' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.WINRE.DISABLED' -Area 'bitlocker' -Status 'fail' -Title 'WinRE is disabled' `
+            -Detail 'Silent BitLocker encryption, Autopilot reset and remote wipe need the Windows Recovery Environment.' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Title 'TPM' -Script {
+    if (-not $isElevated) {
+        Add-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Status 'unknown' -Title 'TPM state not checked' -Detail 'Needs elevation.'
+        return
+    }
+    $tpm = Get-Tpm -ErrorAction Stop
+    $spec = $null
+    try { $spec = [string](Get-CimInstance -Namespace 'root\cimv2\Security\MicrosoftTpm' -ClassName 'Win32_Tpm' -ErrorAction Stop).SpecVersion } catch { }
+    $evidence = [ordered]@{
+        present      = $tpm.TpmPresent
+        ready        = $tpm.TpmReady
+        enabled      = $tpm.TpmEnabled
+        activated    = $tpm.TpmActivated
+        manufacturer = $tpm.ManufacturerIdTxt
+        firmware     = $tpm.ManufacturerVersion
+        specVersion  = $spec
+    }
+    if (-not $tpm.TpmPresent) {
+        Add-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Status 'fail' -Title 'No TPM found' `
+            -Detail 'The TPM is missing or disabled in the firmware (BIOS/UEFI).' -Evidence $evidence
+    }
+    elseif (-not $tpm.TpmReady) {
+        Add-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Status 'fail' -Title 'TPM is not ready' `
+            -Detail 'BitLocker, Windows Hello and the Entra device key cannot use it.' -Evidence $evidence
+    }
+    elseif ($spec -and $spec -notlike '2.0*') {
+        Add-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Status 'warn' -Title 'TPM 1.2 only' `
+            -Detail 'Windows 11 and Autopilot pre-provisioning need TPM 2.0.' -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'BL.TPM.NOTREADY' -Area 'bitlocker' -Status 'pass' -Title 'TPM is ready' -Evidence $evidence
+    }
+}
+#endregion
+
+#region Drivers
+$PnpProblemText = @{
+    1 = 'not configured correctly'; 3 = 'driver may be corrupt'; 10 = 'cannot start'; 12 = 'not enough free resources'
+    14 = 'restart required'; 18 = 'drivers must be reinstalled'; 19 = 'registry configuration damaged'
+    24 = 'not present or not working'; 28 = 'no driver installed'; 31 = 'not working properly'; 32 = 'driver disabled'
+    37 = 'driver failed to initialize'; 39 = 'driver missing or corrupt'; 41 = 'driver loaded but device not found'
+    43 = 'device reported a problem'; 48 = 'driver blocked'; 52 = 'driver signature cannot be verified'
+}
+Invoke-Check -Id 'DRV.DEVICE.ERROR' -Area 'drivers' -Title 'Device drivers' -Script {
+    # 22 = disabled on purpose, 45 = device not connected: not driver problems.
+    $bad = @(Get-CimInstance -ClassName Win32_PnPEntity -Filter 'ConfigManagerErrorCode <> 0' -ErrorAction Stop |
+        Where-Object { $_.ConfigManagerErrorCode -notin @(22, 45) })
+    $devices = @($bad | Select-Object -First 15 | ForEach-Object {
+            $code = [int]$_.ConfigManagerErrorCode
+            [pscustomobject][ordered]@{
+                name       = $_.Name
+                class      = $_.PNPClass
+                errorCode  = $code
+                problem    = $(if ($PnpProblemText.ContainsKey($code)) { $PnpProblemText[$code] } else { 'see Device Manager' })
+                hardwareId = $(if ($_.HardwareID) { @($_.HardwareID)[0] } else { $null })
+            }
+        })
+    $evidence = [ordered]@{ problemDeviceCount = $bad.Count; devices = $devices }
+    if ($bad.Count -gt 0) {
+        $names = ($devices | Select-Object -First 3 | ForEach-Object { '{0} (code {1})' -f $_.name, $_.errorCode }) -join ', '
+        Add-Check -Id 'DRV.DEVICE.ERROR' -Area 'drivers' -Status 'fail' -Title 'Devices with driver problems' `
+            -Detail ("{0} device(s): {1}" -f $bad.Count, $names) -Evidence $evidence
+    }
+    else {
+        Add-Check -Id 'DRV.DEVICE.ERROR' -Area 'drivers' -Status 'pass' -Title 'No devices with driver problems' -Evidence $evidence
+    }
+}
+
+Invoke-Check -Id 'DRV.WU.EXCLUDED' -Area 'drivers' -Title 'Driver updates from Windows Update' -Script {
+    $gpoKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows\WindowsUpdate'
+    $values = [ordered]@{
+        excludeDriversGpo   = Get-RegValue -Path $gpoKey -Name 'ExcludeWUDriversInQualityUpdate'
+        excludeDriversMdm   = Get-RegValue -Path 'HKLM:\SOFTWARE\Microsoft\PolicyManager\current\device\Update' -Name 'ExcludeWUDriversInQualityUpdate'
+        driverSourceIsWsus  = Get-RegValue -Path $gpoKey -Name 'SetPolicyDrivenUpdateSourceForDriverUpdates'
+        wuServer            = Get-RegValue -Path $gpoKey -Name 'WUServer'
+    }
+    if ($values.excludeDriversGpo -eq 1 -or $values.excludeDriversMdm -eq 1) {
+        Add-Check -Id 'DRV.WU.EXCLUDED' -Area 'drivers' -Status 'warn' -Title 'Driver updates from Windows Update are blocked by policy' `
+            -Detail 'Fine if drivers come from another source (OEM tool, ConfigMgr). Otherwise drivers never update.' -Evidence $values
+    }
+    elseif ($values.driverSourceIsWsus -eq 1 -and $values.wuServer) {
+        Add-Check -Id 'DRV.WU.EXCLUDED' -Area 'drivers' -Status 'warn' -Title 'Driver updates come from WSUS' `
+            -Detail 'Drivers are only offered when WSUS approves them.' -Evidence $values
+    }
+    else {
+        Add-Check -Id 'DRV.WU.EXCLUDED' -Area 'drivers' -Status 'pass' -Title 'Driver updates from Windows Update are allowed' -Evidence $values
     }
 }
 #endregion
@@ -924,12 +1445,39 @@ $report = [pscustomobject][ordered]@{
 $json = $report | ConvertTo-Json -Depth 8
 
 if (-not $OutputPath) {
-    $folder = $env:TEMP
+    $folder = $null
+    if ($IntuneMode) {
+        $folder = Join-Path $env:ProgramData 'Microsoft\IntuneManagementExtension\Logs'
+        if (-not (Test-Path -LiteralPath $folder)) {
+            try { New-Item -Path $folder -ItemType Directory -Force | Out-Null } catch { $folder = $null }
+        }
+    }
+    if (-not $folder) { $folder = $env:TEMP }
     if (-not $folder) { $folder = [System.IO.Path]::GetTempPath() }
     $OutputPath = Join-Path $folder ("ClientHealth-{0}.json" -f $device.computerName)
 }
 # Write UTF-8 without a byte order mark so browsers and JSON parsers read the file directly.
-[System.IO.File]::WriteAllText($OutputPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+$writeError = $null
+try {
+    [System.IO.File]::WriteAllText($OutputPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+}
+catch {
+    $writeError = $_.Exception.Message
+    if (-not $IntuneMode) { throw }
+}
+
+if ($IntuneMode) {
+    # One line for the Intune remediation report (Intune keeps up to 2048 characters).
+    $line = '{0} | fail {1}, warn {2}, unknown {3}' -f $overall.ToUpper(), $summary.fail, $summary.warn, $summary.unknown
+    if ($findings.Count -gt 0) { $line += ' | ' + ($findings -join ', ') }
+    if ($writeError) { $line += ' | Report not written: ' + $writeError }
+    else { $line += ' | Report: ' + $OutputPath }
+    if ($line.Length -gt 2000) { $line = $line.Substring(0, 1997) + '...' }
+    Write-Output $line
+    if ($PassThru) { $report }
+    if ($summary.fail -gt 0) { exit 1 }
+    exit 0
+}
 
 if ($CopyToClipboard) {
     try {
