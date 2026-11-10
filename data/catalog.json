@@ -1,0 +1,247 @@
+{
+  "schemaVersion": "0.1-draft",
+  "updated": "2026-11-10",
+  "statusValues": [
+    "available",
+    "needs-fix",
+    "planned"
+  ],
+  "fixes": [
+    {
+      "id": "WU.SERVICE.DISABLED",
+      "area": "patching",
+      "title": "Windows Update, BITS or CryptSvc service disabled",
+      "severity": "high",
+      "status": "needs-fix",
+      "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
+      "script": "remediation.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
+      "risk": "medium",
+      "note": "Run only with the destructive steps switched off until the review findings are fixed."
+    },
+    {
+      "id": "WU.SCAN.FAILED",
+      "area": "patching",
+      "title": "Windows Update scan fails or update agent not responding",
+      "severity": "high",
+      "status": "needs-fix",
+      "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
+      "script": "remediation.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
+      "risk": "medium",
+      "note": "A safe component reset script is planned to replace this."
+    },
+    {
+      "id": "WU.COMPONENTSTORE.CORRUPT",
+      "area": "patching",
+      "title": "Component store or system file corruption (DISM/SFC)",
+      "severity": "high",
+      "status": "needs-fix",
+      "repo": "https://github.com/roalhelm/Windows-Update-Health-Remediation-Suite",
+      "script": "src/intune/Remediate-WUHealth.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/Windows-Update-Health-Remediation-Suite/main/src/intune/Remediate-WUHealth.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Remediate-WUHealth.ps1",
+      "risk": "low",
+      "note": "Repo is private: the download link works only for users with access."
+    },
+    {
+      "id": "WU.POLICY.WSUS_LEFTOVER",
+      "area": "patching",
+      "title": "WSUS or GPO update policy conflicts with Intune/Autopatch",
+      "severity": "high",
+      "status": "needs-fix",
+      "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
+      "script": "remediation.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -removePolicyBlocks 1 -cleanupRegistry 0 -clearRebootFlags 0 -resetWUAgent 0",
+      "risk": "high",
+      "note": "Do not use on co-managed devices whose update workload is on ConfigMgr."
+    },
+    {
+      "id": "WU.PATCHLEVEL.BEHIND",
+      "area": "patching",
+      "title": "Latest quality update missing",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "Settings > Windows Update > Check for updates",
+        "Check Intune update ring and Autopatch group assignment"
+      ]
+    },
+    {
+      "id": "WU.FEATUREUPDATE.BLOCKED",
+      "area": "patching",
+      "title": "Feature update blocked (safeguard hold or setup error)",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "Check safeguard hold ID in the Windows Update for Business report",
+        "Review C:\\$WINDOWS.~BT\\Sources\\Panther\\setuperr.log"
+      ]
+    },
+    {
+      "id": "WU.REBOOT.PENDING",
+      "area": "patching",
+      "title": "Reboot pending",
+      "severity": "medium",
+      "status": "available",
+      "command": "shutdown.exe /r /t 300 /c \"Restart to finish updates\"",
+      "risk": "medium",
+      "note": "No script needed. Never clear the pending-reboot registry keys."
+    },
+    {
+      "id": "SYS.DISK.LOWSPACE",
+      "area": "patching",
+      "title": "Less than 20 GB free on C:",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "Run Disk Cleanup including Windows Update Cleanup",
+        "dism.exe /Online /Cleanup-Image /StartComponentCleanup"
+      ]
+    },
+    {
+      "id": "SYS.STORAGE.HARDWARE",
+      "area": "patching",
+      "title": "Disk errors or unhealthy physical disk",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/Windows-Update-Health-Remediation-Suite",
+      "script": "src/tools/Invoke-WUHealthDiagnostic.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/Windows-Update-Health-Remediation-Suite/main/src/tools/Invoke-WUHealthDiagnostic.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\Invoke-WUHealthDiagnostic.ps1",
+      "risk": "low",
+      "note": "Diagnostic only. Escalate to hardware support; do not run repairs."
+    },
+    {
+      "id": "WU.TELEMETRY.BLOCKED",
+      "area": "patching",
+      "title": "Diagnostic data disabled (no Autopatch/WUfB report data)",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "Set 'Allow Diagnostic Data' to Required in Intune",
+        "Ensure DiagTrack service is not disabled"
+      ]
+    },
+    {
+      "id": "NET.ENDPOINT.UNREACHABLE",
+      "area": "network",
+      "title": "Required Microsoft endpoints not reachable",
+      "severity": "high",
+      "status": "available",
+      "repo": "https://github.com/roalhelm/CheckMicrosoftEndpoints",
+      "script": "CheckMicrosoftEndpointsV2.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/CheckMicrosoftEndpoints/main/CheckMicrosoftEndpointsV2.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\CheckMicrosoftEndpointsV2.ps1 -HtmlReport .\\endpoints.html",
+      "risk": "low",
+      "note": "Direct TCP test: results are not reliable behind an explicit proxy."
+    },
+    {
+      "id": "MDM.SYNC.STALE",
+      "area": "intune",
+      "title": "No successful Intune sync for 7 days",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "Settings > Accounts > Access work or school > Info > Sync",
+        "Check EnterpriseMgmt scheduled tasks and dmwappushservice"
+      ]
+    },
+    {
+      "id": "MDM.ENROLLMENT.BROKEN",
+      "area": "intune",
+      "title": "MDM enrollment or device certificate broken",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "dsregcmd /status",
+        "Check event log DeviceManagement-Enterprise-Diagnostics-Provider/Admin"
+      ]
+    },
+    {
+      "id": "MDM.IME.NOTRUNNING",
+      "area": "intune",
+      "title": "Intune Management Extension missing or stopped",
+      "severity": "high",
+      "status": "needs-fix",
+      "repo": "https://github.com/roalhelm/WindowsAutopatchFix",
+      "script": "remediation.ps1",
+      "download": "https://raw.githubusercontent.com/roalhelm/WindowsAutopatchFix/main/remediation.ps1",
+      "command": "powershell.exe -ExecutionPolicy Bypass -File .\\remediation.ps1 -restartIntune 1 -resetWUComponents 0 -cleanupRegistry 0 -clearRebootFlags 0 -removePolicyBlocks 0 -resetWUAgent 0",
+      "risk": "medium",
+      "note": "A dedicated IME repair script is planned."
+    },
+    {
+      "id": "AAD.PRT.MISSING",
+      "area": "identity",
+      "title": "Entra join or Primary Refresh Token missing",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "manualSteps": [
+        "dsregcmd /status",
+        "dsregcmd /refreshprt in the user context, then sign out and in"
+      ]
+    },
+    {
+      "id": "DEF.SERVICE.STOPPED",
+      "area": "defender",
+      "title": "Defender antivirus or sensor service not running",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "note": "Reserved for the future Defender fix repo.",
+      "manualSteps": [
+        "Get-MpComputerStatus",
+        "Check for third-party antivirus and tamper protection"
+      ]
+    },
+    {
+      "id": "DEF.SIGNATURE.OUTDATED",
+      "area": "defender",
+      "title": "Defender signatures older than 3 days",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "note": "Reserved for the future Defender fix repo.",
+      "manualSteps": [
+        "\"%ProgramFiles%\\Windows Defender\\MpCmdRun.exe\" -SignatureUpdate"
+      ]
+    },
+    {
+      "id": "DEF.RTP.DISABLED",
+      "area": "defender",
+      "title": "Real-time or tamper protection disabled",
+      "severity": "high",
+      "status": "planned",
+      "risk": "low",
+      "note": "Reserved for the future Defender fix repo.",
+      "manualSteps": [
+        "Get-MpComputerStatus",
+        "Check Intune endpoint security antivirus policy"
+      ]
+    },
+    {
+      "id": "DEF.MDE.NOTONBOARDED",
+      "area": "defender",
+      "title": "Defender for Endpoint not onboarded or not reporting",
+      "severity": "medium",
+      "status": "planned",
+      "risk": "low",
+      "note": "Reserved for the future Defender fix repo.",
+      "manualSteps": [
+        "Check HKLM:\\SOFTWARE\\Microsoft\\Windows Advanced Threat Protection\\Status OnboardingState",
+        "Run the MDE Client Analyzer"
+      ]
+    }
+  ]
+}

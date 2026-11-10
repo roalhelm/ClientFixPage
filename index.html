@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client Fix Page</title>
+  <meta name="description" content="Analyse a Windows client health report and find the script that fixes it.">
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <header class="site-header">
+    <div class="wrap">
+      <p class="eyebrow">Windows client health</p>
+      <h1>Client Fix Page</h1>
+      <p class="lede">Run the diagnostic script on a client, load its report here, and see which script gets the device healthy again for patching, Intune, Entra ID and Defender.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="steps" aria-label="How it works">
+      <article class="step">
+        <h2><span class="num">1</span> Run the diagnostic</h2>
+        <p>Run this on the affected client in an elevated PowerShell. It only reads; it changes nothing.</p>
+        <div class="cmd">
+          <pre><code id="diag-cmd">powershell.exe -ExecutionPolicy Bypass -File .\Get-ClientHealth.ps1 -Anonymize -CopyToClipboard</code></pre>
+          <button type="button" class="btn small" data-copy="#diag-cmd">Copy</button>
+        </div>
+        <p><a class="btn" href="scripts/Get-ClientHealth.ps1" download>Download Get-ClientHealth.ps1</a></p>
+      </article>
+
+      <article class="step">
+        <h2><span class="num">2</span> Load the report</h2>
+        <div id="drop" class="drop" tabindex="0" role="button" aria-label="Choose or drop a report file">
+          <p><strong>Drop the JSON report here</strong> or click to choose a file.</p>
+          <input id="file" type="file" accept=".json,application/json" hidden>
+        </div>
+        <label class="label" for="paste">Or paste the report</label>
+        <textarea id="paste" rows="4" spellcheck="false" placeholder='{ "schemaVersion": "1.0", ... }'></textarea>
+        <div class="row">
+          <button type="button" class="btn primary" id="analyse">Analyse</button>
+          <button type="button" class="btn" id="sample">Load sample report</button>
+          <button type="button" class="btn" id="clear" hidden>Clear</button>
+        </div>
+        <p class="privacy">The report is processed in your browser only. Nothing is uploaded or stored.</p>
+        <p id="error" class="error" role="alert" hidden></p>
+      </article>
+    </section>
+
+    <section id="result" hidden aria-live="polite">
+      <div id="overview" class="overview"></div>
+      <div class="filters" id="filters" role="group" aria-label="Filter by area"></div>
+      <h2 id="findings-title">Recommended fixes</h2>
+      <div id="findings"></div>
+      <details class="others" id="unknown-box" hidden>
+        <summary id="unknown-summary"></summary>
+        <div id="unknown"></div>
+      </details>
+      <details class="others" id="passed-box" hidden>
+        <summary id="passed-summary"></summary>
+        <div id="passed"></div>
+      </details>
+    </section>
+  </main>
+
+  <footer class="wrap site-footer">
+    <p>Fix scripts are recommendations. Read a script before you run it, and test on one device first. <span id="catalog-info"></span></p>
+  </footer>
+
+  <script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,239 @@
+{
+  "schemaVersion": "1.0",
+  "tool": "Get-ClientHealth.ps1",
+  "toolVersion": "0.1.0",
+  "generatedAt": "2026-11-10T11:30:00.0000000Z",
+  "elevated": true,
+  "runAsSystem": false,
+  "anonymized": true,
+  "overall": "unhealthy",
+  "summary": {
+    "pass": 11,
+    "fail": 6,
+    "warn": 1,
+    "info": 1,
+    "unknown": 1
+  },
+  "device": {
+    "computerName": "device-sample01",
+    "userName": null,
+    "osCaption": "Microsoft Windows 11 Enterprise",
+    "osVersion": "10.0.26100",
+    "build": "26100",
+    "ubr": 4946,
+    "displayVersion": "24H2",
+    "manufacturer": "Sample Corp",
+    "model": "Notebook 14",
+    "lastBoot": "2026-11-03T07:12:00.0000000+01:00",
+    "entraJoined": true,
+    "domainJoined": false,
+    "tenantId": null,
+    "coManaged": false
+  },
+  "findings": [
+    "WU.SERVICE.DISABLED",
+    "WU.SCAN.FAILED",
+    "WU.PATCHLEVEL.BEHIND",
+    "WU.POLICY.WSUS_LEFTOVER",
+    "SYS.DISK.LOWSPACE",
+    "DEF.SIGNATURE.OUTDATED",
+    "DEF.RTP.DISABLED"
+  ],
+  "checks": [
+    {
+      "id": "SYS.ELEVATION",
+      "area": "system",
+      "status": "pass",
+      "title": "Script runs elevated",
+      "detail": "All checks can run.",
+      "evidence": null
+    },
+    {
+      "id": "WU.SERVICE.DISABLED",
+      "area": "patching",
+      "status": "fail",
+      "title": "Windows Update service disabled or missing",
+      "detail": "wuauserv disabled",
+      "evidence": [
+        {
+          "Name": "wuauserv",
+          "Status": "Stopped",
+          "StartType": "Disabled"
+        },
+        {
+          "Name": "BITS",
+          "Status": "Stopped",
+          "StartType": "Manual"
+        }
+      ]
+    },
+    {
+      "id": "WU.SCAN.FAILED",
+      "area": "patching",
+      "status": "fail",
+      "title": "No successful update scan recently",
+      "detail": "Last successful scan was 23.4 days ago (limit 7).",
+      "evidence": {
+        "daysSinceLastSuccessfulScan": 23.4,
+        "pendingUpdatesInCache": 0,
+        "searchError": null
+      }
+    },
+    {
+      "id": "WU.PATCHLEVEL.BEHIND",
+      "area": "patching",
+      "status": "fail",
+      "title": "No update installed recently",
+      "detail": "Last installation was 61.2 days ago (limit 40).",
+      "evidence": {
+        "daysSinceLastInstall": 61.2,
+        "source": "Windows Update agent",
+        "build": "26100",
+        "ubr": 4946
+      }
+    },
+    {
+      "id": "WU.COMPONENTSTORE.CORRUPT",
+      "area": "patching",
+      "status": "pass",
+      "title": "Component store is healthy",
+      "detail": "",
+      "evidence": {
+        "imageHealthState": "Healthy"
+      }
+    },
+    {
+      "id": "WU.POLICY.WSUS_LEFTOVER",
+      "area": "patching",
+      "status": "fail",
+      "title": "WSUS or GPO update policies conflict with Intune",
+      "detail": "UseWUServer=1 (device scans against WSUS); WUServer is set",
+      "evidence": {
+        "WUServer": "http://wsus.example.internal:8530",
+        "UseWUServer": 1,
+        "configMgrClientPresent": false
+      }
+    },
+    {
+      "id": "WU.FEATUREUPDATE.BLOCKED",
+      "area": "patching",
+      "status": "pass",
+      "title": "No safeguard hold",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "WU.REBOOT.PENDING",
+      "area": "patching",
+      "status": "pass",
+      "title": "No restart pending for updates",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "SYS.DISK.LOWSPACE",
+      "area": "patching",
+      "status": "fail",
+      "title": "Low free disk space",
+      "detail": "11.3 GB free on C: (minimum 20 GB).",
+      "evidence": {
+        "drive": "C:",
+        "freeGB": 11.3,
+        "sizeGB": 237.2
+      }
+    },
+    {
+      "id": "SYS.STORAGE.HARDWARE",
+      "area": "patching",
+      "status": "pass",
+      "title": "Physical disks are healthy",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "WU.TELEMETRY.BLOCKED",
+      "area": "patching",
+      "status": "pass",
+      "title": "Diagnostic data is not blocked",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "NET.ENDPOINT.UNREACHABLE",
+      "area": "network",
+      "status": "pass",
+      "title": "Microsoft endpoints are reachable",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "AAD.PRT.MISSING",
+      "area": "identity",
+      "status": "info",
+      "title": "Device is Entra joined; token not checked",
+      "detail": "The Primary Refresh Token can only be checked in the context of the signed-in user.",
+      "evidence": null
+    },
+    {
+      "id": "MDM.ENROLLMENT.BROKEN",
+      "area": "intune",
+      "status": "pass",
+      "title": "Device is enrolled in Intune",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "MDM.SYNC.STALE",
+      "area": "intune",
+      "status": "pass",
+      "title": "Intune sync runs",
+      "detail": "Last sync task run 0.2 days ago.",
+      "evidence": null
+    },
+    {
+      "id": "MDM.IME.NOTRUNNING",
+      "area": "intune",
+      "status": "pass",
+      "title": "Intune Management Extension is running",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "DEF.SERVICE.STOPPED",
+      "area": "defender",
+      "status": "pass",
+      "title": "Defender antivirus is running",
+      "detail": "",
+      "evidence": null
+    },
+    {
+      "id": "DEF.SIGNATURE.OUTDATED",
+      "area": "defender",
+      "status": "fail",
+      "title": "Defender signatures are outdated",
+      "detail": "Signatures are 9 days old (limit 3).",
+      "evidence": {
+        "signatureAgeDays": 9
+      }
+    },
+    {
+      "id": "DEF.RTP.DISABLED",
+      "area": "defender",
+      "status": "warn",
+      "title": "Tamper protection is off",
+      "detail": "",
+      "evidence": {
+        "realTimeProtection": true,
+        "tamperProtection": false
+      }
+    },
+    {
+      "id": "DEF.MDE.NOTONBOARDED",
+      "area": "defender",
+      "status": "unknown",
+      "title": "Defender for Endpoint onboarding",
+      "detail": "Check could not run: sample value.",
+      "evidence": null
+    }
+  ]
+}
