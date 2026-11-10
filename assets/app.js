@@ -175,7 +175,8 @@
       var button = el('button', 'btn small', (area === 'all' ? 'All areas' : area.charAt(0).toUpperCase() + area.slice(1)) + ' (' + open + ')');
       button.type = 'button';
       button.setAttribute('aria-pressed', String(areaFilter === area));
-      button.addEventListener('click', function () { areaFilter = area; renderFilters(); renderLists(); });
+      button.setAttribute('data-area', area);
+      button.addEventListener('click', function () { areaFilter = area; renderFilters(); renderLists(); refocus('filters', area); });
       box.appendChild(button);
     });
   }
@@ -388,6 +389,16 @@
     return matched >= Math.ceil(words.length / 2) && (direct || words.length > 1) ? score : 0;
   }
 
+  function severityRank(fix) {
+    return SEVERITY_ORDER.hasOwnProperty(fix.severity) ? SEVERITY_ORDER[fix.severity] : 3;
+  }
+
+  // Re-render a filter group and keep keyboard focus on the button that was activated.
+  function refocus(boxId, area) {
+    var target = $(boxId).querySelector('[data-area="' + area + '"]');
+    if (target) { target.focus(); }
+  }
+
   function renderSearchAreas() {
     var box = $('search-areas');
     clear(box);
@@ -399,7 +410,8 @@
       var button = el('button', 'btn small', label + ' (' + n + ')');
       button.type = 'button';
       button.setAttribute('aria-pressed', String(searchArea === area));
-      button.addEventListener('click', function () { searchArea = area; renderSearchAreas(); renderSearch(); });
+      button.setAttribute('data-area', area);
+      button.addEventListener('click', function () { searchArea = area; renderSearchAreas(); renderSearch(); refocus('search-areas', area); });
       box.appendChild(button);
     });
   }
@@ -430,7 +442,7 @@
     if (words.length) {
       hits.sort(function (a, b) {
         if (b.score !== a.score) { return b.score - a.score; }
-        return (SEVERITY_ORDER[a.fix.severity] || 3) - (SEVERITY_ORDER[b.fix.severity] || 3);
+        return severityRank(a.fix) - severityRank(b.fix);
       });
     }
     var box = $('search-results');

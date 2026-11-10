@@ -1,4 +1,5 @@
-/* Design tokens and site chrome taken from letmetrythis.dev (roalhelm/roalhelm.github.io).
+/* Design tokens and site chrome follow the letmetrythis Designvorlage v1.0
+   (roalhelm/roalhelm.github.io, designvorlage/tokens.css). Status colors: fail = --danger, pass = --success, warn = --accent-text.
    Dark is the default; light is enabled with data-theme="light" on <html>. */
 :root {
   --bg: #0b1120; --bg-deep: #070b16; --surface: #101a2c; --surface-strong: #15223a;
@@ -28,9 +29,9 @@
   --header-bg: rgba(244, 248, 251, .85); --card-bg: rgba(255, 255, 255, .95);
   --button-bg: #0e7490; --button-bg-hover: #155e75; --button-text: #ffffff;
   --code-bg: #eef5f9;
-  --fail: #b91c1c; --fail-bg: #fdecec;
+  --fail: #b42318; --fail-bg: #fdecec;
   --warn: #92400e; --warn-bg: #fef3c7;
-  --pass: #166534; --pass-bg: #dcfce7;
+  --pass: #15803d; --pass-bg: #dcfce7;
   --info: #374151; --info-bg: #eef2f6;
   color-scheme: light;
 }
@@ -38,6 +39,8 @@
 @font-face { font-family: "JetBrains Mono"; font-style: normal; font-display: swap; font-weight: 100 800; src: url("fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2"); }
 
 * { box-sizing: border-box; }
+html { scroll-padding-top: 96px; }
+#result, #find { scroll-margin-top: 96px; }
 [hidden] { display: none !important; }
 body {
   margin: 0;
