@@ -15,7 +15,7 @@
     'manual': 'Step-by-step guide'
   };
 
-  var AREA_LABEL = { bitlocker: 'BitLocker' };
+  var AREA_LABEL = { patching: 'Patching', intune: 'Intune', defender: 'Defender', identity: 'Entra ID', network: 'Network', bitlocker: 'BitLocker', security: 'Security', apps: 'Apps' };
 
   var catalog = null;
   var catalogById = {};
@@ -318,7 +318,7 @@
 
   // ---------- Problem search (works without a report) ----------
 
-  var AREA_LABEL = { patching: 'Patching', intune: 'Intune', defender: 'Defender', identity: 'Entra ID', network: 'Network', security: 'Security', apps: 'Apps' };
+
   // Words admins type for an area. A word that is not in an entry still matches the entries of its area.
   var AREA_WORDS = {
     patching: ['update', 'updates', 'patch', 'patches', 'patching', 'wsus', 'wufb', 'autopatch', 'cumulative', 'kb', 'wuauserv', 'upgrade', 'feature', 'quality'],

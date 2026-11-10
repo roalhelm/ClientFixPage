@@ -50,6 +50,10 @@ As SYSTEM the user-only checks (Primary Refresh Token, Entra registration dual s
 | `scripts/Get-ClientHealth.ps1` | The diagnostic script |
 | `.github/workflows/pages.yml` | Deploys the page to GitHub Pages on every push to `main` |
 
+## Change the page
+
+When you change `assets/style.css`, `assets/site.js` or `assets/app.js`, raise the `?v=` value on their links in `index.html`. Browsers cache these files, and without a new value they show the new page with the old styles.
+
 ## Add or change a fix
 
 Edit `data/catalog.json`. Each entry needs an `id` that matches a check ID from the diagnostic script.
