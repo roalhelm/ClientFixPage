@@ -25,7 +25,7 @@
   <link rel="icon" href="assets/img/favicon-32.png" type="image/png" sizes="32x32">
   <link rel="icon" href="assets/img/favicon-48.png" type="image/png" sizes="48x48">
   <link rel="apple-touch-icon" href="assets/img/apple-touch-icon.png">
-  <link rel="stylesheet" href="assets/style.css?v=20261110c">
+  <link rel="stylesheet" href="assets/style.css?v=20261113b">
 </head>
 <body>
   <header class="site-header">
@@ -35,7 +35,13 @@
     </a>
     <button class="nav-toggle" type="button" aria-expanded="false" aria-controls="main-nav">Menu</button>
     <nav id="main-nav" class="main-nav" aria-label="Main navigation">
-      <a href="./" aria-current="page">Client Fix Page</a>
+      <details class="nav-tools is-current">
+        <summary>Tools</summary>
+        <div class="nav-tools-menu">
+          <a href="https://letmetrythis.dev/CheckMicrosoftEndpoints/">Microsoft Endpoint Check<small>Check Microsoft endpoint reachability and service status</small></a>
+          <a href="https://letmetrythis.dev/ClientFixPage/" aria-current="page">Client Fix Page<small>Find the right script for an unhealthy Windows client</small></a>
+        </div>
+      </details>
       <a href="#find">Find a fix</a>
       <a href="https://letmetrythis.dev/index-en.html#projects">Projects</a>
       <a href="https://letmetrythis.dev/index-en.html#blog">Blog</a>
@@ -144,7 +150,7 @@
     </span>
   </footer>
 
-  <script src="assets/site.js?v=20261110c"></script>
-  <script src="assets/app.js?v=20261110c"></script>
+  <script src="assets/site.js?v=20261113b"></script>
+  <script src="assets/app.js?v=20261113b"></script>
 </body>
 </html>
